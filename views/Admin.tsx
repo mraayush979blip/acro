@@ -2,25 +2,50 @@ import React, { useEffect, useState } from 'react';
 import { db } from '../services/db';
 import { Branch, Batch, User, Subject, FacultyAssignment, UserRole } from '../types';
 import { Card, Button, Input, Select } from '../components/UI';
-import { Plus, Trash2, ChevronRight, UserPlus, Users, BookOpen } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, UserPlus, Users, BookOpen, AlertCircle, Database } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'students' | 'faculty'>('students');
+  const [seeding, setSeeding] = useState(false);
+
+  const handleSeed = async () => {
+    if (!window.confirm("This will reset/overwrite initial data. Continue?")) return;
+    setSeeding(true);
+    try {
+      await db.seedDatabase();
+    } catch(e: any) {
+      alert("Seeding failed: " + e.message);
+    } finally {
+      setSeeding(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex space-x-2 border-b border-slate-300 pb-1">
-        <button
-          onClick={() => setActiveTab('students')}
-          className={`px-4 py-2 font-medium text-sm transition-colors ${activeTab === 'students' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-800'}`}
+      <div className="flex justify-between items-end border-b border-slate-300 pb-1">
+        <div className="flex space-x-2">
+          <button
+            onClick={() => setActiveTab('students')}
+            className={`px-4 py-2 font-medium text-sm transition-colors ${activeTab === 'students' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-800'}`}
+          >
+            Manage Students
+          </button>
+          <button
+            onClick={() => setActiveTab('faculty')}
+            className={`px-4 py-2 font-medium text-sm transition-colors ${activeTab === 'faculty' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-800'}`}
+          >
+            Manage Faculty & Subjects
+          </button>
+        </div>
+        
+        <button 
+          onClick={handleSeed} 
+          disabled={seeding} 
+          className="mb-2 text-xs flex items-center px-3 py-1.5 bg-slate-200 text-slate-700 hover:bg-slate-300 rounded transition-colors" 
+          title="Reset/Populate Database with initial data"
         >
-          Manage Students
-        </button>
-        <button
-          onClick={() => setActiveTab('faculty')}
-          className={`px-4 py-2 font-medium text-sm transition-colors ${activeTab === 'faculty' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-800'}`}
-        >
-          Manage Faculty & Subjects
+          <Database className="h-3 w-3 mr-1.5" />
+          {seeding ? 'Seeding...' : 'Initialize Database'}
         </button>
       </div>
 
@@ -194,6 +219,14 @@ const StudentManagement: React.FC = () => {
               <Input label="Enrollment ID" required value={newStudent.enroll} onChange={e => setNewStudent({...newStudent, enroll: e.target.value})} />
               <Button type="submit" className="mb-3">Add Student</Button>
            </form>
+
+           <div className="bg-amber-50 border border-amber-200 rounded-md p-3 flex items-start gap-3 text-sm text-amber-800">
+             <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+             <div>
+               <p className="font-semibold">Action Required for Login:</p>
+               <p>This form creates the student's <strong>data profile</strong>. To allow them to log in, you must manually create a user with this email in the <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="underline hover:text-amber-900">Firebase Console &gt; Authentication</a> tab.</p>
+             </div>
+           </div>
 
            <div className="overflow-x-auto">
              <table className="w-full text-left border-collapse">

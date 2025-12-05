@@ -1,22 +1,26 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword, signOut, User as FirebaseUser, updateProfile, updatePassword } from "firebase/auth";
-import { getFirestore, collection, getDocs, doc, setDoc, query, where, addDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { getAuth, signInWithEmailAndPassword, signOut, User as FirebaseUser } from "firebase/auth";
+import { getFirestore, collection, getDocs, doc, setDoc, query, where, addDoc, deleteDoc, getDoc, writeBatch } from "firebase/firestore";
 import { User, Branch, Batch, Subject, FacultyAssignment, AttendanceRecord, UserRole } from "../types";
 import { SEED_BRANCHES, SEED_BATCHES, SEED_SUBJECTS, SEED_USERS, SEED_ASSIGNMENTS } from "../constants";
 
 // --- Configuration ---
+// Configured for Project ID: acropolis-7d028
 const firebaseConfig = {
   apiKey: "AIzaSyCdpI72dXZU9ZgDi9rNMsThEym7EYJfuq4",
   authDomain: "acropolis-7d028.firebaseapp.com",
   projectId: "acropolis-7d028",
   storageBucket: "acropolis-7d028.firebasestorage.app",
   messagingSenderId: "917626092892",
-  appId: "1:917626092892:web:33637e585e836eeb771599",
-  measurementId: "G-7434LNMMNG"
+  appId: "1:917626092892:web:33637e585e836eeb771599"
 };
 
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const firestore = getFirestore(app);
+
 // --- Service Interface ---
-// We define a generic interface so the UI doesn't care if it's Firebase or LocalStorage
 interface IDataService {
   login: (email: string, pass: string) => Promise<User>;
   logout: () => Promise<void>;
@@ -49,12 +53,220 @@ interface IDataService {
   getAttendance: (branchId: string, batchId: string, subjectId: string, date?: string) => Promise<AttendanceRecord[]>;
   getStudentAttendance: (studentId: string) => Promise<AttendanceRecord[]>;
   saveAttendance: (records: AttendanceRecord[]) => Promise<void>;
+  
+  // Setup
+  seedDatabase: () => Promise<void>;
 }
 
-// --- MOCK Implementation (LocalStorage) ---
+// --- Firebase Implementation ---
+class FirebaseService implements IDataService {
+  
+  async login(email: string, pass: string): Promise<User> {
+    const cred = await signInWithEmailAndPassword(auth, email, pass);
+    const uid = cred.user.uid;
+    
+    // Check for user profile in Firestore
+    let userDoc = await getDoc(doc(firestore, "users", uid));
+    
+    // DEMO HELPER: If Auth User exists but Firestore profile doesn't (e.g. manually created in console),
+    // try to find a seeded profile with the same email and link it to this new UID.
+    if (!userDoc.exists()) {
+       const q = query(collection(firestore, "users"), where("email", "==", email));
+       const snapshot = await getDocs(q);
+       if (!snapshot.empty) {
+         const oldData = snapshot.docs[0].data();
+         // Create the correct profile linked to the real Auth UID
+         await setDoc(doc(firestore, "users", uid), { ...oldData, uid });
+         userDoc = await getDoc(doc(firestore, "users", uid));
+       }
+    }
+
+    if (userDoc.exists()) {
+      return userDoc.data() as User;
+    }
+    
+    throw new Error("Profile not found in Database. Please click 'Initialize Database' in the Admin panel or ensure data is seeded.");
+  }
+
+  async logout(): Promise<void> {
+    await signOut(auth);
+  }
+
+  async getCurrentUser(): Promise<User | null> {
+    return new Promise((resolve) => {
+       const unsubscribe = auth.onAuthStateChanged(async (u) => {
+         unsubscribe();
+         if (u) {
+           const docRef = await getDoc(doc(firestore, "users", u.uid));
+           if (docRef.exists()) {
+             resolve(docRef.data() as User);
+           } else {
+             resolve(null);
+           }
+         } else {
+           resolve(null);
+         }
+       });
+    });
+  }
+
+  // --- Hierarchy ---
+  async getBranches(): Promise<Branch[]> {
+    const snap = await getDocs(collection(firestore, "branches"));
+    return snap.docs.map(d => d.data() as Branch);
+  }
+
+  async addBranch(name: string): Promise<void> {
+    const ref = doc(collection(firestore, "branches"));
+    await setDoc(ref, { id: ref.id, name });
+  }
+
+  async deleteBranch(id: string): Promise<void> {
+    await deleteDoc(doc(firestore, "branches", id));
+  }
+
+  async getBatches(branchId: string): Promise<Batch[]> {
+    const q = query(collection(firestore, "batches"), where("branchId", "==", branchId));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => d.data() as Batch);
+  }
+
+  async addBatch(name: string, branchId: string): Promise<void> {
+    const ref = doc(collection(firestore, "batches"));
+    await setDoc(ref, { id: ref.id, name, branchId });
+  }
+
+  async deleteBatch(id: string): Promise<void> {
+    await deleteDoc(doc(firestore, "batches", id));
+  }
+
+  // --- Users ---
+  async getStudents(branchId: string, batchId: string): Promise<User[]> {
+    // Note: In production, requires composite index. For demo, we filter in memory to save setup time.
+    const q = query(collection(firestore, "users"), where("role", "==", UserRole.STUDENT));
+    const snap = await getDocs(q);
+    const allStudents = snap.docs.map(d => d.data() as User);
+    return allStudents.filter(s => s.studentData?.branchId === branchId && s.studentData?.batchId === batchId);
+  }
+
+  async createStudent(data: Partial<User>): Promise<void> {
+    // Note: We only create the Firestore profile here. 
+    // In a real app, you'd use Firebase Admin SDK to create the Auth account.
+    const ref = doc(collection(firestore, "users"));
+    await setDoc(ref, { ...data, uid: ref.id, role: UserRole.STUDENT });
+  }
+
+  async deleteUser(uid: string): Promise<void> {
+    await deleteDoc(doc(firestore, "users", uid));
+  }
+
+  async getFaculty(): Promise<User[]> {
+    const q = query(collection(firestore, "users"), where("role", "==", UserRole.FACULTY));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => d.data() as User);
+  }
+
+  // --- Subjects & Assignments ---
+  async getSubjects(): Promise<Subject[]> {
+    const snap = await getDocs(collection(firestore, "subjects"));
+    return snap.docs.map(d => d.data() as Subject);
+  }
+
+  async addSubject(name: string, code: string): Promise<void> {
+    const ref = doc(collection(firestore, "subjects"));
+    await setDoc(ref, { id: ref.id, name, code });
+  }
+
+  async deleteSubject(id: string): Promise<void> {
+    await deleteDoc(doc(firestore, "subjects", id));
+  }
+
+  async getAssignments(facultyId?: string): Promise<FacultyAssignment[]> {
+    let q = query(collection(firestore, "assignments"));
+    if (facultyId) {
+      q = query(collection(firestore, "assignments"), where("facultyId", "==", facultyId));
+    }
+    const snap = await getDocs(q);
+    return snap.docs.map(d => d.data() as FacultyAssignment);
+  }
+
+  async assignFaculty(data: Omit<FacultyAssignment, 'id'>): Promise<void> {
+    const ref = doc(collection(firestore, "assignments"));
+    await setDoc(ref, { ...data, id: ref.id });
+  }
+
+  async removeAssignment(id: string): Promise<void> {
+    await deleteDoc(doc(firestore, "assignments", id));
+  }
+
+  // --- Attendance ---
+  async getAttendance(branchId: string, batchId: string, subjectId: string, date?: string): Promise<AttendanceRecord[]> {
+    // Client-side filtering to avoid complex index requirements for the demo
+    const q = query(collection(firestore, "attendance"), where("subjectId", "==", subjectId));
+    const snap = await getDocs(q);
+    let records = snap.docs.map(d => d.data() as AttendanceRecord);
+    
+    return records.filter(r => 
+      r.branchId === branchId && 
+      r.batchId === batchId && 
+      (!date || r.date === date)
+    );
+  }
+
+  async getStudentAttendance(studentId: string): Promise<AttendanceRecord[]> {
+    const q = query(collection(firestore, "attendance"), where("studentId", "==", studentId));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => d.data() as AttendanceRecord);
+  }
+
+  async saveAttendance(records: AttendanceRecord[]): Promise<void> {
+    const batch = writeBatch(firestore);
+    records.forEach(rec => {
+      const ref = doc(firestore, "attendance", rec.id);
+      batch.set(ref, rec);
+    });
+    await batch.commit();
+  }
+
+  // --- Setup ---
+  async seedDatabase(): Promise<void> {
+    const batch = writeBatch(firestore);
+    
+    // Seed Branches
+    SEED_BRANCHES.forEach(b => {
+      batch.set(doc(firestore, "branches", b.id), b);
+    });
+    
+    // Seed Batches
+    SEED_BATCHES.forEach(b => {
+      batch.set(doc(firestore, "batches", b.id), b);
+    });
+    
+    // Seed Subjects
+    SEED_SUBJECTS.forEach(s => {
+      batch.set(doc(firestore, "subjects", s.id), s);
+    });
+    
+    // Seed Users
+    SEED_USERS.forEach(u => {
+      // For seeding, we use the hardcoded UIDs from constants, 
+      // but logic in login() will map real Auth UIDs to these emails.
+      batch.set(doc(firestore, "users", u.uid), u);
+    });
+
+    // Seed Assignments
+    SEED_ASSIGNMENTS.forEach(a => {
+      batch.set(doc(firestore, "assignments", a.id), a);
+    });
+
+    await batch.commit();
+    alert("Database seeded! You can now create auth users matching these emails.");
+  }
+}
+
+// --- MOCK Implementation (Fallback) ---
 class MockService implements IDataService {
   private simulateDelay = () => new Promise(resolve => setTimeout(resolve, 300));
-
   private load(key: string, seed: any[]): any[] {
     const data = localStorage.getItem(key);
     if (!data) {
@@ -63,130 +275,101 @@ class MockService implements IDataService {
     }
     return JSON.parse(data);
   }
-
   private save(key: string, data: any[]) {
     localStorage.setItem(key, JSON.stringify(data));
   }
-
   constructor() {
-    // Initialize seeds if empty
-    this.load('ams_branches', SEED_BRANCHES);
-    this.load('ams_batches', SEED_BATCHES);
-    this.load('ams_subjects', SEED_SUBJECTS);
-    this.load('ams_users', SEED_USERS);
-    this.load('ams_assignments', SEED_ASSIGNMENTS);
+    this.seedDatabase(); // Auto-seed mock
   }
-
   async login(email: string, pass: string): Promise<User> {
     await this.simulateDelay();
     const users = this.load('ams_users', SEED_USERS) as User[];
     const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    
-    // Simple mock auth - allow any password for demo if user exists
     if (user) {
       localStorage.setItem('ams_current_user', JSON.stringify(user));
       return user;
     }
     throw new Error("Invalid credentials");
   }
-
   async logout(): Promise<void> {
     localStorage.removeItem('ams_current_user');
   }
-
   async getCurrentUser(): Promise<User | null> {
     const data = localStorage.getItem('ams_current_user');
     return data ? JSON.parse(data) : null;
   }
-
   async getBranches(): Promise<Branch[]> {
     await this.simulateDelay();
     return this.load('ams_branches', SEED_BRANCHES);
   }
-  
   async addBranch(name: string): Promise<void> {
     const branches = await this.getBranches();
     branches.push({ id: `b_${Date.now()}`, name });
     this.save('ams_branches', branches);
   }
-
   async deleteBranch(id: string): Promise<void> {
     const branches = await this.getBranches();
     this.save('ams_branches', branches.filter(b => b.id !== id));
   }
-
   async getBatches(branchId: string): Promise<Batch[]> {
     await this.simulateDelay();
     const batches = this.load('ams_batches', SEED_BATCHES) as Batch[];
     return batches.filter(b => b.branchId === branchId);
   }
-
   async addBatch(name: string, branchId: string): Promise<void> {
     const batches = this.load('ams_batches', SEED_BATCHES);
     batches.push({ id: `batch_${Date.now()}`, name, branchId });
     this.save('ams_batches', batches);
   }
-  
   async deleteBatch(id: string): Promise<void> {
     const batches = this.load('ams_batches', SEED_BATCHES);
     this.save('ams_batches', batches.filter((b: Batch) => b.id !== id));
   }
-
   async getStudents(branchId: string, batchId: string): Promise<User[]> {
     await this.simulateDelay();
     const users = this.load('ams_users', SEED_USERS) as User[];
     return users.filter(u => u.role === UserRole.STUDENT && u.studentData?.branchId === branchId && u.studentData?.batchId === batchId);
   }
-
   async createStudent(data: Partial<User>): Promise<void> {
     const users = this.load('ams_users', SEED_USERS);
     users.push({ ...data, uid: `stu_${Date.now()}`, role: UserRole.STUDENT });
     this.save('ams_users', users);
   }
-
   async deleteUser(uid: string): Promise<void> {
     const users = this.load('ams_users', SEED_USERS);
     this.save('ams_users', users.filter((u: User) => u.uid !== uid));
   }
-
   async getSubjects(): Promise<Subject[]> {
     await this.simulateDelay();
     return this.load('ams_subjects', SEED_SUBJECTS);
   }
-
   async addSubject(name: string, code: string): Promise<void> {
     const subs = this.load('ams_subjects', SEED_SUBJECTS);
     subs.push({ id: `sub_${Date.now()}`, name, code });
     this.save('ams_subjects', subs);
   }
-
   async deleteSubject(id: string): Promise<void> {
     const subs = this.load('ams_subjects', SEED_SUBJECTS);
     this.save('ams_subjects', subs.filter((s: Subject) => s.id !== id));
   }
-
   async getFaculty(): Promise<User[]> {
     const users = this.load('ams_users', SEED_USERS) as User[];
     return users.filter(u => u.role === UserRole.FACULTY);
   }
-
   async getAssignments(facultyId?: string): Promise<FacultyAssignment[]> {
     const assigns = this.load('ams_assignments', SEED_ASSIGNMENTS) as FacultyAssignment[];
     if (facultyId) return assigns.filter(a => a.facultyId === facultyId);
     return assigns;
   }
-
   async assignFaculty(data: Omit<FacultyAssignment, 'id'>): Promise<void> {
     const assigns = this.load('ams_assignments', SEED_ASSIGNMENTS);
     assigns.push({ ...data, id: `assign_${Date.now()}` });
     this.save('ams_assignments', assigns);
   }
-
   async removeAssignment(id: string): Promise<void> {
     const assigns = this.load('ams_assignments', SEED_ASSIGNMENTS);
     this.save('ams_assignments', assigns.filter((a: FacultyAssignment) => a.id !== id));
   }
-
   async getAttendance(branchId: string, batchId: string, subjectId: string, date?: string): Promise<AttendanceRecord[]> {
     const all = this.load('ams_attendance', []) as AttendanceRecord[];
     return all.filter(a => 
@@ -196,16 +379,12 @@ class MockService implements IDataService {
       (!date || a.date === date)
     );
   }
-
   async getStudentAttendance(studentId: string): Promise<AttendanceRecord[]> {
     const all = this.load('ams_attendance', []) as AttendanceRecord[];
     return all.filter(a => a.studentId === studentId);
   }
-
   async saveAttendance(records: AttendanceRecord[]): Promise<void> {
     const all = this.load('ams_attendance', []) as AttendanceRecord[];
-    
-    // Remove existing records for this day/subject to avoid duplicates (overwrite mode)
     if (records.length > 0) {
       const sample = records[0];
       const filtered = all.filter(a => 
@@ -215,10 +394,19 @@ class MockService implements IDataService {
       this.save('ams_attendance', combined);
     }
   }
+  async seedDatabase(): Promise<void> {
+    if (!localStorage.getItem('ams_users')) {
+      this.load('ams_branches', SEED_BRANCHES);
+      this.load('ams_batches', SEED_BATCHES);
+      this.load('ams_subjects', SEED_SUBJECTS);
+      this.load('ams_users', SEED_USERS);
+      this.load('ams_assignments', SEED_ASSIGNMENTS);
+    }
+  }
 }
 
-// --- Singleton Export ---
-// In a real scenario, we would try-catch Firebase initialization. 
-// Given the prompt constraints and reliability needs, we default to MockService
-// but keep the structure ready for switch.
-export const db = new MockService();
+// --- Export ---
+// Check if Firebase config has a valid API key (either from env or hardcoded).
+const hasFirebaseKey = firebaseConfig.apiKey && firebaseConfig.apiKey.length > 0 && !firebaseConfig.apiKey.includes('mock');
+
+export const db = hasFirebaseKey ? new FirebaseService() : new MockService();
