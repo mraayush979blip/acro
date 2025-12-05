@@ -198,15 +198,17 @@ const StudentManagement: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
-    if(!window.confirm("Are you sure?")) return;
     if (level === 'branches') {
+      if(!window.confirm("Delete this Branch? All associated data will be lost.")) return;
       await db.deleteBranch(id);
       loadBranches();
     } else if (level === 'batches' && selBranch) {
+      if(!window.confirm("Delete this Batch?")) return;
       await db.deleteBatch(id);
       const batchData = await db.getBatches(selBranch.id);
       setBatches(batchData);
     } else if (level === 'students' && selBranch && selBatch) {
+      if(!window.confirm("Delete this Student?")) return;
       await db.deleteUser(id);
       const studentData = await db.getStudents(selBranch.id, selBatch.id);
       setStudents(studentData);
@@ -268,7 +270,7 @@ const StudentManagement: React.FC = () => {
                 </div>
                 <button 
                   onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
-                  className="text-slate-400 hover:text-red-600 p-2 opacity-0 group-hover:opacity-100 transition"
+                  className="text-slate-400 hover:text-red-600 p-2 transition opacity-0 group-hover:opacity-100"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
@@ -314,13 +316,13 @@ const StudentManagement: React.FC = () => {
                </thead>
                <tbody>
                  {students.map(s => (
-                   <tr key={s.uid} className="border-b border-slate-100 hover:bg-slate-50">
+                   <tr key={s.uid} className="border-b border-slate-100 hover:bg-slate-50 group">
                      <td className="py-3 px-2 font-mono text-sm text-slate-700">{s.studentData?.enrollmentId}</td>
                      <td className="py-3 px-2 font-mono text-sm text-slate-700">{s.studentData?.rollNo || '-'}</td>
                      <td className="py-3 px-2 font-medium text-slate-900">{s.displayName}</td>
                      <td className="py-3 px-2 text-slate-600">{s.email}</td>
                      <td className="py-3 px-2 text-right">
-                        <button onClick={() => handleDelete(s.uid)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4"/></button>
+                        <button onClick={() => handleDelete(s.uid)} className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition"><Trash2 className="h-4 w-4"/></button>
                      </td>
                    </tr>
                  ))}
@@ -349,7 +351,7 @@ const FacultyManagement: React.FC = () => {
 
   // Forms
   const [newSub, setNewSub] = useState({ name: '', code: '' });
-  const [newFac, setNewFac] = useState({ name: '', email: '' });
+  const [newFac, setNewFac] = useState({ name: '', email: '', password: '' });
   const [assignForm, setAssignForm] = useState({ facultyId: '', subjectId: '', branchId: '', batchId: '' });
 
   // Edit Modal State
@@ -393,13 +395,13 @@ const FacultyManagement: React.FC = () => {
 
   const handleAddFaculty = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newFac.name && newFac.email) {
+    if (newFac.name && newFac.email && newFac.password) {
       setLoading(true);
       try {
-        await db.createFaculty({ displayName: newFac.name, email: newFac.email });
-        setNewFac({ name: '', email: '' });
+        await db.createFaculty({ displayName: newFac.name, email: newFac.email }, newFac.password);
+        setNewFac({ name: '', email: '', password: '' });
         setFaculty(await db.getFaculty());
-        alert("Faculty profile and account created. Default password: 'password123'");
+        alert("Faculty profile and account created successfully.");
       } catch (e: any) {
         alert("Error creating faculty: " + e.message);
       } finally {
@@ -508,14 +510,14 @@ const FacultyManagement: React.FC = () => {
                </thead>
                <tbody className="divide-y divide-slate-100">
                  {subjects.map(s => (
-                   <tr key={s.id} className="hover:bg-slate-50">
+                   <tr key={s.id} className="hover:bg-slate-50 group">
                      <td className="px-4 py-3 font-mono text-slate-600">{s.code}</td>
                      <td className="px-4 py-3 font-medium text-slate-900">{s.name}</td>
                      <td className="px-4 py-3 text-right space-x-2">
-                       <button onClick={() => setEditSubject(s)} className="text-slate-400 hover:text-indigo-600 transition" title="Edit">
+                       <button onClick={() => setEditSubject(s)} className="text-slate-400 hover:text-indigo-600 transition opacity-0 group-hover:opacity-100" title="Edit">
                          <Edit className="h-4 w-4" />
                        </button>
-                       <button onClick={() => handleDeleteSubject(s.id)} className="text-slate-400 hover:text-red-600 transition" title="Delete">
+                       <button onClick={() => handleDeleteSubject(s.id)} className="text-slate-400 hover:text-red-600 transition opacity-0 group-hover:opacity-100" title="Delete">
                          <Trash2 className="h-4 w-4" />
                        </button>
                      </td>
@@ -537,9 +539,10 @@ const FacultyManagement: React.FC = () => {
             </div>
           </div>
 
-          <form onSubmit={handleAddFaculty} className="bg-slate-50 p-4 rounded-lg border border-slate-200 mb-6 flex flex-col md:flex-row gap-4 items-end">
-             <Input label="Faculty Name" className="mb-0 flex-grow w-full" value={newFac.name} onChange={e => setNewFac({...newFac, name: e.target.value})} required />
-             <Input label="Email" type="email" className="mb-0 flex-grow w-full" value={newFac.email} onChange={e => setNewFac({...newFac, email: e.target.value})} required />
+          <form onSubmit={handleAddFaculty} className="bg-slate-50 p-4 rounded-lg border border-slate-200 mb-6 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+             <Input label="Faculty Name" className="mb-0 w-full" value={newFac.name} onChange={e => setNewFac({...newFac, name: e.target.value})} required />
+             <Input label="Email" type="email" className="mb-0 w-full" value={newFac.email} onChange={e => setNewFac({...newFac, email: e.target.value})} required />
+             <Input label="Password" type="password" className="mb-0 w-full" value={newFac.password} onChange={e => setNewFac({...newFac, password: e.target.value})} required placeholder="Set Password" />
              <Button type="submit" disabled={loading}>{loading ? 'Adding...' : 'Add Faculty'}</Button>
           </form>
 
@@ -547,7 +550,7 @@ const FacultyManagement: React.FC = () => {
              <Info className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
              <div>
                <p className="font-semibold">Automatic Account Creation:</p>
-               <p>New faculty members are automatically registered with the default password: <strong>password123</strong>.</p>
+               <p>Faculty members are registered with the <strong>email and password</strong> you provide above.</p>
              </div>
            </div>
 
@@ -562,7 +565,7 @@ const FacultyManagement: React.FC = () => {
                </thead>
                <tbody className="divide-y divide-slate-100">
                  {faculty.map(f => (
-                   <tr key={f.uid} className="hover:bg-slate-50">
+                   <tr key={f.uid} className="hover:bg-slate-50 group">
                      <td className="px-4 py-3 font-medium text-slate-900 flex items-center gap-3">
                        <div className="h-8 w-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold">
                           {f.displayName.charAt(0)}
@@ -577,7 +580,7 @@ const FacultyManagement: React.FC = () => {
                        >
                          View Classes
                        </button>
-                       <button onClick={() => handleDeleteFaculty(f.uid)} className="text-slate-400 hover:text-red-600 transition" title="Remove">
+                       <button onClick={() => handleDeleteFaculty(f.uid)} className="text-slate-400 hover:text-red-600 transition opacity-0 group-hover:opacity-100" title="Remove">
                          <Trash2 className="h-4 w-4" />
                        </button>
                      </td>
@@ -681,7 +684,7 @@ const FacultyManagement: React.FC = () => {
                    const ba = batches.find(b => b.id === a.batchId);
 
                    return (
-                    <tr key={a.id} className="hover:bg-slate-50">
+                    <tr key={a.id} className="hover:bg-slate-50 group">
                       <td className="px-4 py-3 font-medium text-slate-900">
                         <div className="flex items-center">
                           <div className="h-6 w-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs mr-2 font-bold">
@@ -697,7 +700,7 @@ const FacultyManagement: React.FC = () => {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <button onClick={() => handleDeleteAssignment(a.id)} className="text-slate-400 hover:text-red-600 transition">
+                        <button onClick={() => handleDeleteAssignment(a.id)} className="text-slate-400 hover:text-red-600 transition opacity-0 group-hover:opacity-100">
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </td>

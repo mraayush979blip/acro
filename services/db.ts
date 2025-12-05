@@ -47,7 +47,7 @@ interface IDataService {
   deleteSubject: (id: string) => Promise<void>;
   
   getFaculty: () => Promise<User[]>;
-  createFaculty: (data: Partial<User>) => Promise<void>;
+  createFaculty: (data: Partial<User>, password?: string) => Promise<void>;
   getAssignments: (facultyId?: string) => Promise<FacultyAssignment[]>;
   assignFaculty: (data: Omit<FacultyAssignment, 'id'>) => Promise<void>;
   removeAssignment: (id: string) => Promise<void>;
@@ -82,7 +82,7 @@ class FirebaseService implements IDataService {
       return cred.user.uid;
     } catch (e: any) {
       if (e.code === 'auth/email-already-in-use') {
-        throw new Error(`Email ${email} is already in use.`);
+        throw new Error(`Email ${email} is already in use. Please check Firebase Console or delete the user manually if re-adding.`);
       }
       throw e;
     } finally {
@@ -229,11 +229,12 @@ class FirebaseService implements IDataService {
     return snap.docs.map(d => d.data() as User);
   }
 
-  async createFaculty(data: Partial<User>): Promise<void> {
+  async createFaculty(data: Partial<User>, password?: string): Promise<void> {
     if (!data.email) throw new Error("Email is required");
     
     // 1. Create Auth User
-    const newUid = await this.createAuthUser(data.email, "password123");
+    const pass = password || "password123";
+    const newUid = await this.createAuthUser(data.email, pass);
 
     // 2. Create Profile
     const ref = doc(firestore, "users", newUid);
@@ -422,6 +423,7 @@ class MockService implements IDataService {
     this.save('ams_users', users);
   }
   async deleteUser(uid: string): Promise<void> {
+    // Delete user
     const users = this.load('ams_users', SEED_USERS);
     this.save('ams_users', users.filter((u: User) => u.uid !== uid));
   }
@@ -450,7 +452,7 @@ class MockService implements IDataService {
     const users = this.load('ams_users', SEED_USERS) as User[];
     return users.filter(u => u.role === UserRole.FACULTY);
   }
-  async createFaculty(data: Partial<User>): Promise<void> {
+  async createFaculty(data: Partial<User>, password?: string): Promise<void> {
     const users = this.load('ams_users', SEED_USERS);
     users.push({ ...data, uid: `fac_${Date.now()}`, role: UserRole.FACULTY });
     this.save('ams_users', users);
