@@ -62,15 +62,6 @@ export const AdminDashboard: React.FC = () => {
         
         <div className="flex gap-2">
             <button 
-              onClick={handleMigrate} 
-              disabled={migrating} 
-              className="mb-2 text-xs flex items-center px-3 py-1.5 bg-orange-100 text-orange-700 hover:bg-orange-200 rounded transition-colors" 
-              title="Migrate old data to new Class structure"
-            >
-              <RefreshCw className="h-3 w-3 mr-1.5" />
-              {migrating ? 'Migrating...' : 'Migrate Data V2'}
-            </button>
-            <button 
               onClick={handleSeed} 
               disabled={seeding} 
               className="mb-2 text-xs flex items-center px-3 py-1.5 bg-slate-200 text-slate-700 hover:bg-slate-300 rounded transition-colors" 
