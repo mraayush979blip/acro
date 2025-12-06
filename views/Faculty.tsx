@@ -9,7 +9,7 @@ interface FacultyProps {
   user: User;
 }
 
-type Step = 'BRANCH' | 'CLASS' | 'BATCH' | 'SUBJECT' | 'DASHBOARD';
+type Step = 'BRANCH' | 'BATCH' | 'SUBJECT' | 'DASHBOARD';
 type DashboardMode = 'MENU' | 'MARK' | 'HISTORY';
 
 export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
@@ -19,14 +19,12 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
   // Metadata Maps
   const [metaData, setMetaData] = useState<{
     branches: Record<string, string>;
-    classes: Record<string, string>;
     batches: Record<string, string>;
     subjects: Record<string, {name: string, code: string}>;
-  }>({ branches: {}, classes: {}, batches: {}, subjects: {} });
+  }>({ branches: {}, batches: {}, subjects: {} });
 
   const [step, setStep] = useState<Step>('BRANCH');
   const [selBranchId, setSelBranchId] = useState('');
-  const [selClassId, setSelClassId] = useState('');
   const [selBatchId, setSelBatchId] = useState('');
   const [selSubjectId, setSelSubjectId] = useState('');
   
@@ -44,45 +42,30 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<User | null>(null);
 
-  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
-  const [scriptUrl, setScriptUrl] = useState('');
-  const [isSyncing, setIsSyncing] = useState(false);
-
   useEffect(() => {
     const init = async () => {
       setLoadingAssignments(true);
       try {
         const myAssignments = await db.getAssignments(user.uid);
         
-        // Fetch Metadata needed for these assignments
-        // Optimally we should only fetch what we need, but for simplicity fetching all
         const [allBranches, allSubjects] = await Promise.all([db.getBranches(), db.getSubjects()]);
         
-        // We need to fetch classes and batches iteratively based on assignments to build map
-        // Or just fetch all. Let's fetch classes for involved branches.
         const involvedBranchIds = Array.from(new Set(myAssignments.map(a => a.branchId)));
         
         const branchMap: Record<string, string> = {};
         allBranches.forEach(b => branchMap[b.id] = b.name);
 
-        const classMap: Record<string, string> = {};
-        for (const bid of involvedBranchIds) {
-             const cls = await db.getClasses(bid);
-             cls.forEach(c => classMap[c.id] = c.name);
-        }
-
         const batchMap: Record<string, string> = {};
-        // Note: We might need to fetch batches for involved classes
-        const involvedClassIds = Array.from(new Set(myAssignments.map(a => a.classId)));
-        for (const cid of involvedClassIds) {
-            const bts = await db.getBatches(cid);
-            bts.forEach(b => batchMap[b.id] = b.name);
+        // Fetch batches for involved branches
+        for (const bid of involvedBranchIds) {
+             const bts = await db.getBatches(bid);
+             bts.forEach(b => batchMap[b.id] = b.name);
         }
 
         const subjectMap: Record<string, {name: string, code: string}> = {};
         allSubjects.forEach(s => subjectMap[s.id] = { name: s.name, code: s.code });
 
-        setMetaData({ branches: branchMap, classes: classMap, batches: batchMap, subjects: subjectMap });
+        setMetaData({ branches: branchMap, batches: batchMap, subjects: subjectMap });
         setAssignments(myAssignments);
       } finally {
         setLoadingAssignments(false);
@@ -93,11 +76,10 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
 
   // Load Students
   useEffect(() => {
-    if (step === 'DASHBOARD' && selBranchId && selClassId && selBatchId) {
+    if (step === 'DASHBOARD' && selBranchId && selBatchId) {
       const loadClass = async () => {
         setLoadingStudents(true);
-        // If selBatchId is 'ALL', fetch for class, else specific batch
-        const data = await db.getStudents(selClassId, selBatchId);
+        const data = await db.getStudents(selBranchId, selBatchId);
         
         const sortedData = data.sort((a, b) => {
            const rollA = a.studentData?.rollNo || a.studentData?.enrollmentId || '';
@@ -110,14 +92,14 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
       };
       loadClass();
     }
-  }, [step, selBranchId, selClassId, selBatchId]);
+  }, [step, selBranchId, selBatchId]);
 
   // Load Attendance Status
   useEffect(() => {
     if (mode === 'MARK' && step === 'DASHBOARD') {
       const fetchDailyRecord = async () => {
         // Fetch records
-        const records = await db.getAttendance(selBranchId, selClassId, selBatchId, selSubjectId, attendanceDate);
+        const records = await db.getAttendance(selBranchId, selBatchId, selSubjectId, attendanceDate);
         const statusMap: Record<string, boolean> = {};
         students.forEach(s => statusMap[s.uid] = true);
         if (selectedSlots.length > 0) {
@@ -129,14 +111,14 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
       };
       fetchDailyRecord();
     }
-  }, [mode, attendanceDate, selectedSlots, students, selBranchId, selClassId, selBatchId, selSubjectId]);
+  }, [mode, attendanceDate, selectedSlots, students, selBranchId, selBatchId, selSubjectId]);
 
   // Load History
   useEffect(() => {
     if (mode === 'HISTORY' && step === 'DASHBOARD') {
       const fetchHistory = async () => {
         setLoadingHistory(true);
-        const allRecords = await db.getAttendance(selBranchId, selClassId, selBatchId, selSubjectId);
+        const allRecords = await db.getAttendance(selBranchId, selBatchId, selSubjectId);
         setAllClassRecords(allRecords);
         
         const stats = students.map(s => {
@@ -158,7 +140,7 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
       };
       fetchHistory();
     }
-  }, [mode, step, selBranchId, selClassId, selBatchId, selSubjectId, students]);
+  }, [mode, step, selBranchId, selBatchId, selSubjectId, students]);
 
   // --- Wizard Logic ---
   const availableBranches = useMemo(() => {
@@ -166,23 +148,9 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
     return ids.map(id => ({ id, name: metaData.branches[id] || 'Unknown Branch' }));
   }, [assignments, metaData]);
 
-  const availableClasses = useMemo(() => {
-    const relevant = assignments.filter(a => a.branchId === selBranchId);
-    const ids = Array.from(new Set(relevant.map(a => a.classId)));
-    return ids.map(id => ({ id, name: metaData.classes[id] || 'Unknown Class' }));
-  }, [assignments, selBranchId, metaData]);
-
   const availableBatches = useMemo(() => {
-    const relevant = assignments.filter(a => a.branchId === selBranchId && a.classId === selClassId);
-    // Check if any assignment is for 'ALL'
+    const relevant = assignments.filter(a => a.branchId === selBranchId);
     const hasAll = relevant.some(a => a.batchId === 'ALL');
-    
-    // If 'ALL' is assigned, we should offer 'ALL' as an option, 
-    // AND if we want to be specific, we could list individual batches if the user prefers, 
-    // but typically if you are assigned ALL, you take attendance for the whole class.
-    // However, the prompt says "give option to take all batches attendance".
-    
-    // Let's list specific batches first.
     const ids = Array.from(new Set(relevant.map(a => a.batchId).filter(id => id !== 'ALL')));
     const options = ids.map(id => ({ id, name: metaData.batches[id] || 'Unknown Batch' }));
     
@@ -190,29 +158,25 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
         options.unshift({ id: 'ALL', name: 'All Batches (Combined)' });
     }
     return options;
-  }, [assignments, selBranchId, selClassId, metaData]);
+  }, [assignments, selBranchId, metaData]);
 
   const availableSubjects = useMemo(() => {
-    // Filter assignments that match current selections
     const relevant = assignments.filter(a => 
         a.branchId === selBranchId && 
-        a.classId === selClassId && 
-        (a.batchId === selBatchId || a.batchId === 'ALL') // If I selected 'ALL', I can see subjects assigned to ALL. If I selected specific, I see specific.
+        (a.batchId === selBatchId || a.batchId === 'ALL')
     );
     return relevant.map(a => ({ 
       id: a.subjectId, 
       name: metaData.subjects[a.subjectId]?.name, 
       code: metaData.subjects[a.subjectId]?.code 
     }));
-  }, [assignments, selBranchId, selClassId, selBatchId, metaData]);
+  }, [assignments, selBranchId, selBatchId, metaData]);
 
-  const selectBranch = (id: string) => { setSelBranchId(id); setStep('CLASS'); };
-  const selectClass = (id: string) => { setSelClassId(id); setStep('BATCH'); };
+  const selectBranch = (id: string) => { setSelBranchId(id); setStep('BATCH'); };
   
   const selectBatch = (id: string) => {
     setSelBatchId(id);
-    // Auto-skip logic
-    const relevantAssignments = assignments.filter(a => a.branchId === selBranchId && a.classId === selClassId && (a.batchId === id || a.batchId === 'ALL'));
+    const relevantAssignments = assignments.filter(a => a.branchId === selBranchId && (a.batchId === id || a.batchId === 'ALL'));
     if (relevantAssignments.length === 1) {
       setSelSubjectId(relevantAssignments[0].subjectId);
       setStep('DASHBOARD');
@@ -228,7 +192,6 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
     if (mode === 'HISTORY' && selectedStudent) { setSelectedStudent(null); return; }
     if (mode !== 'MENU') { setMode('MENU'); return; }
     
-    // Navigation back logic
     if (step === 'DASHBOARD') {
         setStep('SUBJECT');
         setSelSubjectId('');
@@ -236,9 +199,6 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
         setStep('BATCH');
         setSelBatchId('');
     } else if (step === 'BATCH') {
-        setStep('CLASS');
-        setSelClassId('');
-    } else if (step === 'CLASS') {
         setStep('BRANCH');
         setSelBranchId('');
     }
@@ -261,8 +221,7 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
             studentId: s.uid,
             subjectId: selSubjectId,
             branchId: selBranchId,
-            classId: selClassId,
-            batchId: selBatchId, // Could be 'ALL' or specific
+            batchId: selBatchId,
             facultyId: user.uid,
             isPresent: attendanceStatus[s.uid],
             markedBy: user.uid,
@@ -293,8 +252,6 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
     link.click();
   };
 
-  const handleSyncToSheet = async () => { /* Same as before */ };
-
   const presentCount = Object.values(attendanceStatus).filter(Boolean).length;
 
   if (loadingAssignments) return <div className="p-12 text-center text-slate-500">Loading schedule...</div>;
@@ -303,8 +260,7 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
     <div className="flex items-center text-sm text-slate-500 mb-6 bg-white p-3 rounded-lg border border-slate-200 shadow-sm flex-wrap">
        {step !== 'BRANCH' && <button onClick={goBack} className="mr-3 p-1 hover:bg-slate-100 rounded-full"><ArrowLeft className="h-4 w-4" /></button>}
        <span className={step === 'BRANCH' ? 'font-bold text-indigo-700' : ''}>Branch</span>
-       {selBranchId && <><ChevronRight className="h-4 w-4 mx-2" /><span className={step === 'CLASS' ? 'font-bold text-indigo-700' : ''}>{metaData.branches[selBranchId]}</span></>}
-       {selClassId && <><ChevronRight className="h-4 w-4 mx-2" /><span className={step === 'BATCH' ? 'font-bold text-indigo-700' : ''}>{metaData.classes[selClassId]}</span></>}
+       {selBranchId && <><ChevronRight className="h-4 w-4 mx-2" /><span className={step === 'BATCH' ? 'font-bold text-indigo-700' : ''}>{metaData.branches[selBranchId]}</span></>}
        {selBatchId && <><ChevronRight className="h-4 w-4 mx-2" /><span className={step === 'SUBJECT' ? 'font-bold text-indigo-700' : ''}>{selBatchId === 'ALL' ? 'All Batches' : metaData.batches[selBatchId]}</span></>}
        {selSubjectId && <><ChevronRight className="h-4 w-4 mx-2" /><span className="font-bold text-indigo-700">{metaData.subjects[selSubjectId]?.name}</span></>}
     </div>
@@ -327,25 +283,7 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
     );
   }
 
-  // STEP 2: CLASS (NEW)
-  if (step === 'CLASS') {
-    return (
-      <div className="max-w-4xl mx-auto">
-        {renderBreadcrumb()}
-        <h2 className="text-xl font-bold text-slate-800 mb-4">Select Class</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {availableClasses.map(c => (
-            <div key={c.id} onClick={() => selectClass(c.id)} className="bg-white p-6 rounded-xl border hover:border-indigo-500 cursor-pointer shadow-sm group">
-              <div className="bg-orange-50 w-12 h-12 rounded-full flex items-center justify-center mb-4"><GraduationCap className="h-6 w-6 text-orange-600"/></div>
-              <h3 className="font-bold text-lg text-slate-800">{c.name}</h3>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  // STEP 3: BATCH
+  // STEP 2: BATCH
   if (step === 'BATCH') {
     return (
       <div className="max-w-4xl mx-auto">
@@ -363,7 +301,7 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
     );
   }
 
-  // STEP 4: SUBJECT
+  // STEP 3: SUBJECT
   if (step === 'SUBJECT') {
     return (
       <div className="max-w-4xl mx-auto">
@@ -382,10 +320,8 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
     );
   }
 
-  // DASHBOARD (Menu/Mark/History) - Mostly same as before, just ensuring IDs are passed
+  // DASHBOARD
   if (step === 'DASHBOARD') {
-      // Re-use existing Dashboard render logic
-      // ... (Copying existing Dashboard render from previous file)
        return (
       <div className="max-w-5xl mx-auto pb-24">
         {!selectedStudent ? renderBreadcrumb() : (
@@ -432,11 +368,11 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
                 {loadingStudents ? <div className="p-12 text-center text-slate-500">Loading list...</div> : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
-                      <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase w-24">Roll No</th><th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase">Student Name</th><th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase text-right w-32">Status</th></tr></thead>
+                      <thead className="bg-slate-50 border-b border-slate-200"><tr><th className="px-4 py-3 text-xs font-bold text-slate-900 uppercase w-24">Roll No</th><th className="px-4 py-3 text-xs font-bold text-slate-900 uppercase">Student Name</th><th className="px-4 py-3 text-xs font-bold text-slate-900 uppercase text-right w-32">Status</th></tr></thead>
                       <tbody className="divide-y divide-slate-100">
                         {students.map(s => (
                           <tr key={s.uid} onClick={() => toggleStatus(s.uid)} className={`cursor-pointer transition-colors ${attendanceStatus[s.uid] ? 'hover:bg-slate-50' : 'bg-red-50/50 hover:bg-red-50'}`}>
-                            <td className="px-4 py-3 font-mono text-sm text-slate-600">{s.studentData?.rollNo || s.studentData?.enrollmentId}</td>
+                            <td className="px-4 py-3 font-mono text-sm text-slate-900">{s.studentData?.rollNo || s.studentData?.enrollmentId}</td>
                             <td className="px-4 py-3 text-sm font-medium text-slate-900">{s.displayName}</td>
                             <td className="px-4 py-3 text-right">
                               <div className={`relative inline-flex h-6 w-12 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${attendanceStatus[s.uid] ? 'bg-indigo-600' : 'bg-slate-200'}`}>
@@ -470,7 +406,7 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
           </div>
         )}
 
-        {/* History Mode (Simplified) */}
+        {/* History Mode */}
         {mode === 'HISTORY' && (
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
                {!selectedStudent ? (
@@ -483,10 +419,10 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
                     {/* Table */}
                     {loadingHistory ? <div className="p-8 text-center">Loading...</div> : (
                       <table className="w-full text-left text-sm">
-                        <thead className="bg-slate-50 border-b"><tr><th className="p-3">Roll</th><th className="p-3">Name</th><th className="p-3 text-center">Total</th><th className="p-3 text-center">Present</th><th className="p-3 text-right">%</th></tr></thead>
+                        <thead className="bg-slate-50 border-b"><tr><th className="p-3 text-slate-900">Roll</th><th className="p-3 text-slate-900">Name</th><th className="p-3 text-center text-slate-900">Total</th><th className="p-3 text-center text-slate-900">Present</th><th className="p-3 text-right text-slate-900">%</th></tr></thead>
                         <tbody className="divide-y">{historyStats.map(s => (
                            <tr key={s.uid} onClick={()=>setSelectedStudent(students.find(stu=>stu.uid===s.uid)||null)} className="hover:bg-slate-50 cursor-pointer">
-                              <td className="p-3 font-mono">{s.roll}</td><td className="p-3 font-medium">{s.name}</td><td className="p-3 text-center">{s.total}</td><td className="p-3 text-center">{s.present}</td>
+                              <td className="p-3 font-mono text-slate-900">{s.roll}</td><td className="p-3 font-medium text-slate-900">{s.name}</td><td className="p-3 text-center text-slate-900">{s.total}</td><td className="p-3 text-center text-slate-900">{s.present}</td>
                               <td className="p-3 text-right"><span className={`px-2 py-0.5 rounded text-xs font-bold ${s.percent<75?'bg-red-100 text-red-700':'bg-green-100 text-green-700'}`}>{s.percent}%</span></td>
                            </tr>
                         ))}</tbody>
@@ -498,9 +434,9 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
                   <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
                       <h2 className="text-xl font-bold mb-4">{selectedStudent.displayName}</h2>
                       {/* Log Table */}
-                      <table className="w-full text-sm text-left"><thead className="bg-slate-50 border-b"><tr><th className="p-2">Date</th><th className="p-2">Lec</th><th className="p-2 text-right">Status</th></tr></thead>
+                      <table className="w-full text-sm text-left"><thead className="bg-slate-50 border-b"><tr><th className="p-2 text-slate-900">Date</th><th className="p-2 text-slate-900">Lec</th><th className="p-2 text-right text-slate-900">Status</th></tr></thead>
                         <tbody>{allClassRecords.filter(r=>r.studentId===selectedStudent.uid).sort((a,b)=>new Date(b.date).getTime()-new Date(a.date).getTime()).map(r=>(
-                           <tr key={r.id} className="border-b"><td className="p-2">{r.date}</td><td className="p-2">L{r.lectureSlot}</td><td className="p-2 text-right"><span className={r.isPresent?'text-green-600':'text-red-600'}>{r.isPresent?'Present':'Absent'}</span></td></tr>
+                           <tr key={r.id} className="border-b"><td className="p-2 text-slate-900">{r.date}</td><td className="p-2 text-slate-900">L{r.lectureSlot}</td><td className="p-2 text-right"><span className={r.isPresent?'text-green-600':'text-red-600'}>{r.isPresent?'Present':'Absent'}</span></td></tr>
                         ))}</tbody>
                       </table>
                   </div>

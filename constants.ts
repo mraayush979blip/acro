@@ -1,5 +1,5 @@
 
-import { Branch, ClassEntity, Batch, Subject, User, UserRole, FacultyAssignment } from './types';
+import { Branch, Batch, Subject, User, UserRole, FacultyAssignment } from './types';
 
 export const SEED_BRANCHES: Branch[] = [
   { id: 'b_cse', name: 'Computer Science (CSE)' },
@@ -7,16 +7,10 @@ export const SEED_BRANCHES: Branch[] = [
   { id: 'b_ece', name: 'Electronics (ECE)' }
 ];
 
-export const SEED_CLASSES: ClassEntity[] = [
-  { id: 'cl_cse_2', name: '2nd Year', branchId: 'b_cse' },
-  { id: 'cl_cse_3', name: '3rd Year', branchId: 'b_cse' },
-  { id: 'cl_aiml_2', name: '2nd Year', branchId: 'b_aiml' }
-];
-
 export const SEED_BATCHES: Batch[] = [
-  { id: 'batch_cse_2_a', name: 'Batch A', classId: 'cl_cse_2' },
-  { id: 'batch_cse_2_b', name: 'Batch B', classId: 'cl_cse_2' },
-  { id: 'batch_aiml_2_a', name: 'Batch A', classId: 'cl_aiml_2' }
+  { id: 'batch_cse_a', name: 'Batch A', branchId: 'b_cse' },
+  { id: 'batch_cse_b', name: 'Batch B', branchId: 'b_cse' },
+  { id: 'batch_aiml_a', name: 'Batch A', branchId: 'b_aiml' }
 ];
 
 export const SEED_SUBJECTS: Subject[] = [
@@ -51,8 +45,7 @@ export const SEED_USERS: User[] = [
     role: UserRole.STUDENT,
     studentData: {
       branchId: 'b_cse',
-      classId: 'cl_cse_2',
-      batchId: 'batch_cse_2_a',
+      batchId: 'batch_cse_a',
       enrollmentId: '0827CS211001'
     }
   },
@@ -63,8 +56,7 @@ export const SEED_USERS: User[] = [
     role: UserRole.STUDENT,
     studentData: {
       branchId: 'b_cse',
-      classId: 'cl_cse_2',
-      batchId: 'batch_cse_2_a',
+      batchId: 'batch_cse_a',
       enrollmentId: '0827CS211002'
     }
   }
@@ -76,15 +68,13 @@ export const SEED_ASSIGNMENTS: FacultyAssignment[] = [
     id: 'assign_1',
     facultyId: 'fac_1',
     branchId: 'b_cse',
-    classId: 'cl_cse_2',
-    batchId: 'batch_cse_2_a',
+    batchId: 'batch_cse_a',
     subjectId: 'sub_ds'
   },
   {
     id: 'assign_2',
     facultyId: 'fac_1',
     branchId: 'b_cse',
-    classId: 'cl_cse_2',
     batchId: 'ALL', // Example of ALL batches assignment
     subjectId: 'sub_network'
   }

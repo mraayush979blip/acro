@@ -1,10 +1,9 @@
 
-
 import { initializeApp, deleteApp, FirebaseApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider, User as FirebaseUser } from "firebase/auth";
 import { getFirestore, collection, getDocs, doc, setDoc, query, where, addDoc, deleteDoc, getDoc, writeBatch, updateDoc } from "firebase/firestore";
-import { User, Branch, ClassEntity, Batch, Subject, FacultyAssignment, AttendanceRecord, UserRole } from "../types";
-import { SEED_BRANCHES, SEED_CLASSES, SEED_BATCHES, SEED_SUBJECTS, SEED_USERS, SEED_ASSIGNMENTS } from "../constants";
+import { User, Branch, Batch, Subject, FacultyAssignment, AttendanceRecord, UserRole } from "../types";
+import { SEED_BRANCHES, SEED_BATCHES, SEED_SUBJECTS, SEED_USERS, SEED_ASSIGNMENTS } from "../constants";
 
 // --- Configuration ---
 // Configured for Project ID: acropolis-7d028
@@ -34,16 +33,12 @@ interface IDataService {
   addBranch: (name: string) => Promise<void>;
   deleteBranch: (id: string) => Promise<void>;
   
-  getClasses: (branchId: string) => Promise<ClassEntity[]>; // NEW
-  addClass: (name: string, branchId: string) => Promise<void>; // NEW
-  deleteClass: (id: string) => Promise<void>; // NEW
-
-  getBatches: (classId: string) => Promise<Batch[]>; // Updated: by classId
-  addBatch: (name: string, classId: string) => Promise<void>; // Updated: by classId
+  getBatches: (branchId: string) => Promise<Batch[]>; // Updated: by branchId
+  addBatch: (name: string, branchId: string) => Promise<void>; // Updated: by branchId
   deleteBatch: (id: string) => Promise<void>;
   
   // Users
-  getStudents: (classId: string, batchId?: string) => Promise<User[]>; // Updated
+  getStudents: (branchId: string, batchId?: string) => Promise<User[]>; // Updated
   createStudent: (data: Partial<User>) => Promise<void>;
   importStudents: (students: Partial<User>[]) => Promise<void>;
   deleteUser: (uid: string) => Promise<void>;
@@ -61,13 +56,12 @@ interface IDataService {
   removeAssignment: (id: string) => Promise<void>;
   
   // Attendance
-  getAttendance: (branchId: string, classId: string, batchId: string, subjectId: string, date?: string) => Promise<AttendanceRecord[]>;
+  getAttendance: (branchId: string, batchId: string, subjectId: string, date?: string) => Promise<AttendanceRecord[]>;
   getStudentAttendance: (studentId: string) => Promise<AttendanceRecord[]>;
   saveAttendance: (records: AttendanceRecord[]) => Promise<void>;
   
   // Setup
   seedDatabase: () => Promise<void>;
-  migrateToClassStructure: () => Promise<void>;
 }
 
 // --- Firebase Implementation ---
@@ -171,38 +165,27 @@ class FirebaseService implements IDataService {
   }
   async deleteBranch(id: string): Promise<void> { await deleteDoc(doc(firestore, "branches", id)); }
 
-  async getClasses(branchId: string): Promise<ClassEntity[]> {
-    const q = query(collection(firestore, "classes"), where("branchId", "==", branchId));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => d.data() as ClassEntity);
-  }
-  async addClass(name: string, branchId: string): Promise<void> {
-    const ref = doc(collection(firestore, "classes"));
-    await setDoc(ref, { id: ref.id, name, branchId });
-  }
-  async deleteClass(id: string): Promise<void> { await deleteDoc(doc(firestore, "classes", id)); }
-
-  async getBatches(classId: string): Promise<Batch[]> {
-    const q = query(collection(firestore, "batches"), where("classId", "==", classId));
+  async getBatches(branchId: string): Promise<Batch[]> {
+    const q = query(collection(firestore, "batches"), where("branchId", "==", branchId));
     const snap = await getDocs(q);
     return snap.docs.map(d => d.data() as Batch);
   }
-  async addBatch(name: string, classId: string): Promise<void> {
+  async addBatch(name: string, branchId: string): Promise<void> {
     const ref = doc(collection(firestore, "batches"));
-    await setDoc(ref, { id: ref.id, name, classId });
+    await setDoc(ref, { id: ref.id, name, branchId });
   }
   async deleteBatch(id: string): Promise<void> { await deleteDoc(doc(firestore, "batches", id)); }
 
   // --- Users ---
-  async getStudents(classId: string, batchId?: string): Promise<User[]> {
+  async getStudents(branchId: string, batchId?: string): Promise<User[]> {
     const q = query(collection(firestore, "users"), where("role", "==", UserRole.STUDENT));
     const snap = await getDocs(q);
     const all = snap.docs.map(d => d.data() as User);
-    // If batchId is provided (or not ALL), filter strict. If ALL, filter by class only.
+    // If batchId is provided (or not ALL), filter strict. If ALL, filter by branch only.
     if (batchId && batchId !== 'ALL') {
-        return all.filter(s => s.studentData?.classId === classId && s.studentData?.batchId === batchId);
+        return all.filter(s => s.studentData?.branchId === branchId && s.studentData?.batchId === batchId);
     }
-    return all.filter(s => s.studentData?.classId === classId);
+    return all.filter(s => s.studentData?.branchId === branchId);
   }
 
   async createStudent(data: Partial<User>): Promise<void> {
@@ -291,15 +274,15 @@ class FirebaseService implements IDataService {
   async removeAssignment(id: string): Promise<void> { await deleteDoc(doc(firestore, "assignments", id)); }
 
   // --- Attendance ---
-  async getAttendance(branchId: string, classId: string, batchId: string, subjectId: string, date?: string): Promise<AttendanceRecord[]> {
+  async getAttendance(branchId: string, batchId: string, subjectId: string, date?: string): Promise<AttendanceRecord[]> {
     const q = query(collection(firestore, "attendance"), where("subjectId", "==", subjectId));
     const snap = await getDocs(q);
     let records = snap.docs.map(d => d.data() as AttendanceRecord);
-    // If batchId is ALL, we want all records for this Class+Subject
+    // If batchId is ALL, we want all records for this Branch+Subject
     if (batchId === 'ALL') {
-       return records.filter(r => r.branchId === branchId && r.classId === classId && (!date || r.date === date));
+       return records.filter(r => r.branchId === branchId && (!date || r.date === date));
     }
-    return records.filter(r => r.branchId === branchId && r.classId === classId && r.batchId === batchId && (!date || r.date === date));
+    return records.filter(r => r.branchId === branchId && r.batchId === batchId && (!date || r.date === date));
   }
   async getStudentAttendance(studentId: string): Promise<AttendanceRecord[]> {
     const q = query(collection(firestore, "attendance"), where("studentId", "==", studentId));
@@ -316,84 +299,11 @@ class FirebaseService implements IDataService {
   async seedDatabase(): Promise<void> {
     const batch = writeBatch(firestore);
     SEED_BRANCHES.forEach(b => batch.set(doc(firestore, "branches", b.id), b));
-    SEED_CLASSES.forEach(c => batch.set(doc(firestore, "classes", c.id), c));
     SEED_BATCHES.forEach(b => batch.set(doc(firestore, "batches", b.id), b));
     SEED_SUBJECTS.forEach(s => batch.set(doc(firestore, "subjects", s.id), s));
     SEED_USERS.forEach(u => batch.set(doc(firestore, "users", u.uid), u));
     SEED_ASSIGNMENTS.forEach(a => batch.set(doc(firestore, "assignments", a.id), a));
     await batch.commit();
-  }
-  
-  async migrateToClassStructure(): Promise<void> {
-      console.log("Starting Migration...");
-      const branches = await this.getBranches();
-      
-      for (const branch of branches) {
-          // 1. Create Default Class if not exists
-          const classes = await this.getClasses(branch.id);
-          let targetClassId = '';
-          if (classes.length === 0) {
-              targetClassId = `cl_${branch.id}_migrated`;
-              await this.addClass("Year 1 (Migrated)", branch.id);
-              // Firestore addClass generates ID, let's fetch it back or assume we used setDoc logic if we changed it.
-              // Actually addClass in this file uses auto-id inside the function but the code above uses doc(collection) which is auto id.
-              // Let's rely on finding it.
-              const newClasses = await this.getClasses(branch.id);
-              targetClassId = newClasses[0].id;
-          } else {
-              targetClassId = classes[0].id;
-          }
-          
-          const batch = writeBatch(firestore);
-          let ops = 0;
-          const commitThreshold = 400;
-
-          // 2. Update Batches (Old ones likely have branchId field which we can query or we scan all)
-          // Since we can't easily query "missing classId", we query everything related to branch in logic if possible
-          // But 'batches' collection might be clean. Let's look for batches with this branchId.
-          // NOTE: The previous Batch interface had branchId. 
-          const batchSnap = await getDocs(query(collection(firestore, "batches"), where("branchId", "==", branch.id)));
-          batchSnap.forEach(d => {
-              batch.update(d.ref, { classId: targetClassId });
-              ops++;
-          });
-
-          // 3. Update Students
-          const userSnap = await getDocs(query(collection(firestore, "users"), where("studentData.branchId", "==", branch.id)));
-          userSnap.forEach(d => {
-              const u = d.data() as User;
-              if (!u.studentData?.classId) {
-                  batch.update(d.ref, { "studentData.classId": targetClassId });
-                  ops++;
-              }
-          });
-
-          // 4. Update Assignments
-          const assignSnap = await getDocs(query(collection(firestore, "assignments"), where("branchId", "==", branch.id)));
-          assignSnap.forEach(d => {
-              const a = d.data() as FacultyAssignment;
-              if (!a.classId) {
-                  batch.update(d.ref, { classId: targetClassId });
-                  ops++;
-              }
-          });
-
-           // 5. Update Attendance
-          const attendSnap = await getDocs(query(collection(firestore, "attendance"), where("branchId", "==", branch.id)));
-          attendSnap.forEach(d => {
-              const a = d.data() as AttendanceRecord;
-              if (!a.classId) {
-                  batch.update(d.ref, { classId: targetClassId });
-                  ops++;
-              }
-          });
-
-          if (ops > 0) {
-              await batch.commit();
-              console.log(`Migrated ${ops} records for branch ${branch.name}`);
-          }
-      }
-      console.log("Migration Complete.");
   }
 }
 
@@ -436,29 +346,14 @@ class MockService implements IDataService {
       this.save('ams_branches', b.filter((x:any)=>x.id!==id));
   }
 
-  async getClasses(branchId: string) {
-      await this.simulateDelay();
-      const cls = this.load('ams_classes', SEED_CLASSES) as ClassEntity[];
-      return cls.filter(c => c.branchId === branchId);
-  }
-  async addClass(name: string, branchId: string) {
-      const cls = this.load('ams_classes', SEED_CLASSES);
-      cls.push({id:`cl_${Date.now()}`, name, branchId});
-      this.save('ams_classes', cls);
-  }
-  async deleteClass(id: string) {
-      const cls = this.load('ams_classes', SEED_CLASSES);
-      this.save('ams_classes', cls.filter((x:any)=>x.id!==id));
-  }
-
-  async getBatches(classId: string) {
+  async getBatches(branchId: string) {
     await this.simulateDelay();
     const batches = this.load('ams_batches', SEED_BATCHES) as Batch[];
-    return batches.filter(b => b.classId === classId);
+    return batches.filter(b => b.branchId === branchId);
   }
-  async addBatch(name: string, classId: string) {
+  async addBatch(name: string, branchId: string) {
     const batches = this.load('ams_batches', SEED_BATCHES);
-    batches.push({id:`batch_${Date.now()}`, name, classId});
+    batches.push({id:`batch_${Date.now()}`, name, branchId});
     this.save('ams_batches', batches);
   }
   async deleteBatch(id: string) {
@@ -466,12 +361,12 @@ class MockService implements IDataService {
       this.save('ams_batches', b.filter((x:any)=>x.id!==id));
   }
 
-  async getStudents(classId: string, batchId?: string) {
+  async getStudents(branchId: string, batchId?: string) {
     const users = this.load('ams_users', SEED_USERS) as User[];
     if (batchId && batchId !== 'ALL') {
-        return users.filter(u => u.role === UserRole.STUDENT && u.studentData?.classId === classId && u.studentData?.batchId === batchId);
+        return users.filter(u => u.role === UserRole.STUDENT && u.studentData?.branchId === branchId && u.studentData?.batchId === batchId);
     }
-    return users.filter(u => u.role === UserRole.STUDENT && u.studentData?.classId === classId);
+    return users.filter(u => u.role === UserRole.STUDENT && u.studentData?.branchId === branchId);
   }
   async createStudent(data: Partial<User>) {
     const users = this.load('ams_users', SEED_USERS);
@@ -513,7 +408,7 @@ class MockService implements IDataService {
   async resetFacultyPassword(uid: string, newPass: string) { 
      const users = this.load('ams_users', SEED_USERS);
      const u = users.find((x:any)=>x.uid===uid);
-     if(u) { u.password = newPass; this.save('ams_users', users); }
+     if(u) { (u as any).password = newPass; this.save('ams_users', users); }
   }
 
   async getAssignments(facultyId?: string) {
@@ -531,12 +426,12 @@ class MockService implements IDataService {
       this.save('ams_assignments', all.filter((x:any)=>x.id!==id));
   }
 
-  async getAttendance(branchId: string, classId: string, batchId: string, subjectId: string, date?: string) {
+  async getAttendance(branchId: string, batchId: string, subjectId: string, date?: string) {
     const all = this.load('ams_attendance', []) as AttendanceRecord[];
     if (batchId === 'ALL') {
-        return all.filter(a => a.branchId === branchId && a.classId === classId && a.subjectId === subjectId && (!date || a.date === date));
+        return all.filter(a => a.branchId === branchId && a.subjectId === subjectId && (!date || a.date === date));
     }
-    return all.filter(a => a.branchId === branchId && a.classId === classId && a.batchId === batchId && a.subjectId === subjectId && (!date || a.date === date));
+    return all.filter(a => a.branchId === branchId && a.batchId === batchId && a.subjectId === subjectId && (!date || a.date === date));
   }
   async getStudentAttendance(studentId: string) {
     const all = this.load('ams_attendance', []) as AttendanceRecord[];
@@ -554,70 +449,11 @@ class MockService implements IDataService {
   async seedDatabase() { 
       // Force reset local storage
       localStorage.setItem('ams_branches', JSON.stringify(SEED_BRANCHES));
-      localStorage.setItem('ams_classes', JSON.stringify(SEED_CLASSES));
       localStorage.setItem('ams_batches', JSON.stringify(SEED_BATCHES));
       localStorage.setItem('ams_subjects', JSON.stringify(SEED_SUBJECTS));
       localStorage.setItem('ams_users', JSON.stringify(SEED_USERS));
       localStorage.setItem('ams_assignments', JSON.stringify(SEED_ASSIGNMENTS));
       alert("Local Database seeded!");
-  }
-
-  async migrateToClassStructure() {
-      // 1. Branches
-      const branches = this.load('ams_branches', SEED_BRANCHES) as Branch[];
-      const classes = this.load('ams_classes', SEED_CLASSES) as ClassEntity[];
-      const batches = this.load('ams_batches', SEED_BATCHES) as any[];
-      const users = this.load('ams_users', SEED_USERS) as User[];
-      const assigns = this.load('ams_assignments', SEED_ASSIGNMENTS) as any[];
-      const attendance = this.load('ams_attendance', []) as any[];
-
-      for (const branch of branches) {
-          // Check for class
-          let targetClassId = '';
-          const existing = classes.filter(c => c.branchId === branch.id);
-          if (existing.length === 0) {
-              targetClassId = `cl_${branch.id}_migrated`;
-              classes.push({ id: targetClassId, name: 'Year 1 (Migrated)', branchId: branch.id });
-          } else {
-              targetClassId = existing[0].id;
-          }
-
-          // Batches (Assumes old batch had branchId or we link via some other means, here we assume global scan)
-          batches.forEach(b => {
-              // Legacy batches might have branchId or we just move ALL batches without classId
-              if (b.branchId === branch.id && !b.classId) {
-                  b.classId = targetClassId;
-              }
-          });
-
-          // Users
-          users.forEach(u => {
-              if (u.studentData?.branchId === branch.id && !u.studentData.classId) {
-                  u.studentData.classId = targetClassId;
-              }
-          });
-
-          // Assignments
-          assigns.forEach(a => {
-              if (a.branchId === branch.id && !a.classId) {
-                  a.classId = targetClassId;
-              }
-          });
-          
-           // Attendance
-          attendance.forEach(a => {
-              if (a.branchId === branch.id && !a.classId) {
-                  a.classId = targetClassId;
-              }
-          });
-      }
-      
-      this.save('ams_classes', classes);
-      this.save('ams_batches', batches);
-      this.save('ams_users', users);
-      this.save('ams_assignments', assigns);
-      this.save('ams_attendance', attendance);
-      console.log("Mock Migration Complete");
   }
 }
 
