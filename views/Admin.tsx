@@ -1,5 +1,4 @@
 
-
 import React, { useEffect, useState } from 'react';
 import { db } from '../services/db';
 import { Branch, ClassEntity, Batch, User, Subject, FacultyAssignment, AttendanceRecord } from '../types';
@@ -392,7 +391,7 @@ const StudentManagement: React.FC = () => {
               placeholder={`New ${level === 'branches' ? 'Branch' : level === 'classes' ? 'Class' : 'Batch'} Name`} 
               value={newItemName}
               onChange={(e) => setNewItemName(e.target.value)}
-              className="flex-grow"
+              className="flex-grow text-slate-900 bg-white"
             />
             <Button onClick={handleAdd}><Plus className="h-4 w-4 mr-1 inline" /> Add</Button>
           </div>
@@ -420,10 +419,10 @@ const StudentManagement: React.FC = () => {
         <div className="space-y-6">
            <div className="flex flex-col gap-4 bg-slate-50 p-4 rounded-md border border-slate-200">
               <form onSubmit={handleAddStudent} className="grid grid-cols-1 md:grid-cols-4 gap-4 w-full">
-                 <Input label="Name" required value={newStudent.name} onChange={e => setNewStudent({...newStudent, name: e.target.value})} className="mb-0" />
-                 <Input label="Email" type="email" required value={newStudent.email} onChange={e => setNewStudent({...newStudent, email: e.target.value})} className="mb-0" />
-                 <Input label="Enrollment ID" required value={newStudent.enroll} onChange={e => setNewStudent({...newStudent, enroll: e.target.value})} className="mb-0" />
-                 <Input label="Roll No" value={newStudent.rollNo} onChange={e => setNewStudent({...newStudent, rollNo: e.target.value})} className="mb-0" />
+                 <Input label="Name" required value={newStudent.name} onChange={e => setNewStudent({...newStudent, name: e.target.value})} className="mb-0 text-slate-900 bg-white" />
+                 <Input label="Email" type="email" required value={newStudent.email} onChange={e => setNewStudent({...newStudent, email: e.target.value})} className="mb-0 text-slate-900 bg-white" />
+                 <Input label="Enrollment ID" required value={newStudent.enroll} onChange={e => setNewStudent({...newStudent, enroll: e.target.value})} className="mb-0 text-slate-900 bg-white" />
+                 <Input label="Roll No" value={newStudent.rollNo} onChange={e => setNewStudent({...newStudent, rollNo: e.target.value})} className="mb-0 text-slate-900 bg-white" />
               </form>
               <div className="flex gap-2 w-full justify-end">
                 <FileUploader onFileSelect={handleCSVUpload} label="Import CSV" />
@@ -474,6 +473,10 @@ const FacultyManagement: React.FC = () => {
   const [classes, setClasses] = useState<ClassEntity[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
 
+  // Metadata maps for table display
+  const [classMap, setClassMap] = useState<Record<string, string>>({});
+  const [batchMap, setBatchMap] = useState<Record<string, string>>({});
+
   const [newSub, setNewSub] = useState({ name: '', code: '' });
   const [newFac, setNewFac] = useState({ name: '', email: '', password: '' });
   const [assignForm, setAssignForm] = useState({ facultyId: '', subjectId: '', branchId: '', classId: '', batchId: '' });
@@ -492,10 +495,37 @@ const FacultyManagement: React.FC = () => {
   const loadData = async () => {
     setIsLoadingData(true);
     try {
-      setSubjects(await db.getSubjects());
-      setFaculty(await db.getFaculty());
-      setAssignments(await db.getAssignments());
-      setBranches(await db.getBranches());
+      const subs = await db.getSubjects();
+      const facs = await db.getFaculty();
+      const assigns = await db.getAssignments();
+      const brs = await db.getBranches();
+      
+      setSubjects(subs);
+      setFaculty(facs);
+      setAssignments(assigns);
+      setBranches(brs);
+
+      // Resolve metadata for table display
+      const cMap: Record<string, string> = {};
+      const bMap: Record<string, string> = {};
+      
+      const classIds = Array.from(new Set(assigns.map(a => a.classId).filter(Boolean)));
+      const branchIds = Array.from(new Set(assigns.map(a => a.branchId).filter(Boolean)));
+      
+      // Fetch classes involved in assignments
+      for (const bid of branchIds) {
+          const cls = await db.getClasses(bid);
+          cls.forEach(c => cMap[c.id] = c.name);
+      }
+      // Fetch batches involved in assignments
+      for (const cid of classIds) {
+          const bts = await db.getBatches(cid);
+          bts.forEach(b => bMap[b.id] = b.name);
+      }
+      
+      setClassMap(cMap);
+      setBatchMap(bMap);
+
     } finally { setIsLoadingData(false); }
   };
 
@@ -514,7 +544,7 @@ const FacultyManagement: React.FC = () => {
   const handleAddFaculty = async (e: React.FormEvent) => { e.preventDefault(); if (newFac.name) { setActionLoading(true); try { await db.createFaculty({ displayName: newFac.name, email: newFac.email }, newFac.password); setNewFac({ name: '', email: '', password: '' }); setFaculty(await db.getFaculty()); alert("Faculty added."); } catch(e:any) { alert(e.message); } finally { setActionLoading(false); } } };
   const handleDeleteFaculty = async (uid: string) => { if(!window.confirm("Delete?")) return; await db.deleteUser(uid); setFaculty(await db.getFaculty()); };
   const handleDeleteSubject = async (id: string) => { if(!window.confirm("Delete?")) return; await db.deleteSubject(id); setSubjects(await db.getSubjects()); };
-  const handleDeleteAssignment = async (id: string) => { if(!window.confirm("Remove?")) return; await db.removeAssignment(id); setAssignments(await db.getAssignments()); };
+  const handleDeleteAssignment = async (id: string) => { if(!window.confirm("Remove?")) return; await db.removeAssignment(id); loadData(); };
   const initiateResetPassword = (f: User) => { setSelectedFacultyForReset(f); setResetModalOpen(true); };
   const handleResetPassword = async () => { if (selectedFacultyForReset && newPasswordInput) { setActionLoading(true); try { await db.resetFacultyPassword(selectedFacultyForReset.uid, newPasswordInput); alert("Password updated"); setResetModalOpen(false); setFaculty(await db.getFaculty()); } catch(e:any) { alert(e.message); } finally { setActionLoading(false); } } };
 
@@ -529,7 +559,8 @@ const FacultyManagement: React.FC = () => {
   const confirmAssignment = async () => {
     if (pendingAssignment) {
       await db.assignFaculty(pendingAssignment);
-      setAssignments(await db.getAssignments());
+      // Reload everything to update map and list
+      await loadData();
       setAssignForm({ ...assignForm, subjectId: '' }); 
       setPendingAssignment(null);
       setConfirmModalOpen(false);
@@ -565,9 +596,9 @@ const FacultyManagement: React.FC = () => {
              <Card>
                <h3 className="font-bold mb-4">Faculty</h3>
                <form onSubmit={handleAddFaculty} className="mb-4 grid grid-cols-4 gap-2 bg-slate-50 p-4 rounded">
-                  <Input label="Name" value={newFac.name} onChange={e=>setNewFac({...newFac, name:e.target.value})} required className="mb-0"/>
-                  <Input label="Email" value={newFac.email} onChange={e=>setNewFac({...newFac, email:e.target.value})} required className="mb-0"/>
-                  <Input label="Password" type="password" value={newFac.password} onChange={e=>setNewFac({...newFac, password:e.target.value})} required className="mb-0"/>
+                  <Input label="Name" value={newFac.name} onChange={e=>setNewFac({...newFac, name:e.target.value})} required className="mb-0 text-slate-900 bg-white"/>
+                  <Input label="Email" value={newFac.email} onChange={e=>setNewFac({...newFac, email:e.target.value})} required className="mb-0 text-slate-900 bg-white"/>
+                  <Input label="Password" type="password" value={newFac.password} onChange={e=>setNewFac({...newFac, password:e.target.value})} required className="mb-0 text-slate-900 bg-white"/>
                   <div className="flex items-end"><Button type="submit" disabled={actionLoading}>Add</Button></div>
                </form>
                <table className="w-full text-left text-sm">
@@ -642,14 +673,22 @@ const FacultyManagement: React.FC = () => {
                     {assignments.map(a => {
                       const fac = faculty.find(f => f.uid === a.facultyId);
                       const sub = subjects.find(s => s.id === a.subjectId);
+                      // Resolve Names
+                      const branchName = branches.find(b => b.id === a.branchId)?.name || a.branchId || 'Unknown Branch';
+                      const className = classMap[a.classId] || a.classId?.replace('cl_', '').replace(/_/g, ' ') || '?';
+                      const batchName = a.batchId === 'ALL' ? 'All Batches' : (batchMap[a.batchId] || a.batchId?.replace('batch_', '').replace(/_/g, ' ') || '?');
+
                       return (
                         <tr key={a.id} className="hover:bg-slate-50">
                           <td className="px-4 py-3">{fac?.displayName}</td>
                           <td className="px-4 py-3">{sub?.name}</td>
                           <td className="px-4 py-3 text-slate-600">
-                             <span className="bg-slate-100 px-2 py-0.5 rounded text-xs border border-slate-200">
-                               ID: {a.branchId?.split('_')[1] || '-'} / {a.classId?.split('_')[1] || '-'} / {a.batchId === 'ALL' ? 'ALL' : a.batchId?.split('_')[1] || '-'}
-                             </span>
+                            <div className="flex flex-col text-xs">
+                                <span className="font-semibold text-slate-700">{branchName}</span>
+                                <span className="text-slate-500">
+                                    {className} <span className="mx-1 text-slate-300">|</span> {batchName}
+                                </span>
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-right"><button onClick={() => handleDeleteAssignment(a.id)}><Trash2 className="h-4 w-4 text-slate-400 hover:text-red-500"/></button></td>
                         </tr>
