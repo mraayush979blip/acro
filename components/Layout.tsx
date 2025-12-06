@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { LogOut, User as UserIcon, Menu, X, ChevronDown } from 'lucide-react';
+import { LogOut, User as UserIcon, Menu, X, ChevronDown, Settings } from 'lucide-react';
 import { User, UserRole } from '../types';
 import { db } from '../services/db';
 import { AcropolisLogo } from './UI';
@@ -8,10 +8,11 @@ interface LayoutProps {
   children: React.ReactNode;
   user: User;
   onLogout: () => void;
+  onOpenSettings: () => void;
   title: string;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, title }) => {
+export const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, onOpenSettings, title }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -85,6 +86,16 @@ export const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, title 
                 </div>
                 
                 <div className="p-2">
+                  <button 
+                    onClick={() => {
+                      setIsMenuOpen(false);
+                      onOpenSettings();
+                    }}
+                    className="w-full flex items-center px-4 py-2 text-sm text-slate-700 hover:bg-indigo-50 rounded-md transition-colors"
+                  >
+                    <Settings className="h-4 w-4 mr-3" />
+                    Settings
+                  </button>
                   <button 
                     onClick={() => {
                       setIsMenuOpen(false);

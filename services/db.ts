@@ -1,5 +1,5 @@
 import { initializeApp, deleteApp, FirebaseApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, User as FirebaseUser } from "firebase/auth";
+import { getAuth, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider, User as FirebaseUser } from "firebase/auth";
 import { getFirestore, collection, getDocs, doc, setDoc, query, where, addDoc, deleteDoc, getDoc, writeBatch, updateDoc } from "firebase/firestore";
 import { User, Branch, Batch, Subject, FacultyAssignment, AttendanceRecord, UserRole } from "../types";
 import { SEED_BRANCHES, SEED_BATCHES, SEED_SUBJECTS, SEED_USERS, SEED_ASSIGNMENTS } from "../constants";
@@ -25,6 +25,7 @@ interface IDataService {
   login: (email: string, pass: string) => Promise<User>;
   logout: () => Promise<void>;
   getCurrentUser: () => Promise<User | null>;
+  changePassword: (currentPass: string, newPass: string) => Promise<void>; // NEW
   
   // Hierarchy
   getBranches: () => Promise<Branch[]>;
@@ -48,7 +49,7 @@ interface IDataService {
   
   getFaculty: () => Promise<User[]>;
   createFaculty: (data: Partial<User>, password?: string) => Promise<void>;
-  resetFacultyPassword: (uid: string, newPass: string) => Promise<void>; // NEW
+  resetFacultyPassword: (uid: string, newPass: string) => Promise<void>;
   getAssignments: (facultyId?: string) => Promise<FacultyAssignment[]>;
   assignFaculty: (data: Omit<FacultyAssignment, 'id'>) => Promise<void>;
   removeAssignment: (id: string) => Promise<void>;
@@ -143,6 +144,25 @@ class FirebaseService implements IDataService {
     });
   }
 
+  async changePassword(currentPass: string, newPass: string): Promise<void> {
+    const user = auth.currentUser;
+    if (!user || !user.email) throw new Error("No authenticated user.");
+
+    try {
+      // Re-authenticate the user first
+      const credential = EmailAuthProvider.credential(user.email, currentPass);
+      await reauthenticateWithCredential(user, credential);
+      
+      // Update the password
+      await updatePassword(user, newPass);
+    } catch (e: any) {
+      if (e.code === 'auth/wrong-password') {
+        throw new Error("The current password you entered is incorrect.");
+      }
+      throw e;
+    }
+  }
+
   // --- Hierarchy ---
   async getBranches(): Promise<Branch[]> {
     const snap = await getDocs(collection(firestore, "branches"));
@@ -175,7 +195,6 @@ class FirebaseService implements IDataService {
 
   // --- Users ---
   async getStudents(branchId: string, batchId: string): Promise<User[]> {
-    // Note: In production, requires composite index. For demo, we filter in memory to save setup time.
     const q = query(collection(firestore, "users"), where("role", "==", UserRole.STUDENT));
     const snap = await getDocs(q);
     const allStudents = snap.docs.map(d => d.data() as User);
@@ -184,43 +203,28 @@ class FirebaseService implements IDataService {
 
   async createStudent(data: Partial<User>): Promise<void> {
     if (!data.email) throw new Error("Email is required");
-    
-    // Default password is Enrollment ID, fallback to password123 if missing
     const password = data.studentData?.enrollmentId || "password123";
-    
-    // 1. Create Auth User (Real)
     const newUid = await this.createAuthUser(data.email, password);
-    
-    // 2. Create Firestore Profile with matching UID
     const ref = doc(firestore, "users", newUid);
     await setDoc(ref, { ...data, uid: newUid, role: UserRole.STUDENT });
   }
 
   async importStudents(students: Partial<User>[]): Promise<void> {
-    // We must do this sequentially to handle the Auth creation safely
-    // In a real app, this should be a Cloud Function to run faster and cleaner
     for (const s of students) {
       if (s.email) {
         try {
           const password = s.studentData?.enrollmentId || "password123";
-          
-          // 1. Create Auth
           const newUid = await this.createAuthUser(s.email, password);
-          
-          // 2. Create Profile
           const ref = doc(firestore, "users", newUid);
           await setDoc(ref, { ...s, uid: newUid, role: UserRole.STUDENT });
         } catch (e) {
           console.error(`Failed to import student ${s.email}:`, e);
-          // Continue to next student even if one fails
         }
       }
     }
   }
 
   async deleteUser(uid: string): Promise<void> {
-    // Note: Client SDK cannot delete Auth users easily without being logged in as them.
-    // This only deletes the profile. Admin must manually delete from Console to fully cleanup.
     await deleteDoc(doc(firestore, "users", uid));
   }
 
@@ -232,18 +236,13 @@ class FirebaseService implements IDataService {
 
   async createFaculty(data: Partial<User>, password?: string): Promise<void> {
     if (!data.email) throw new Error("Email is required");
-    
-    // 1. Create Auth User
     const pass = password || "password123";
     const newUid = await this.createAuthUser(data.email, pass);
-
-    // 2. Create Profile
     const ref = doc(firestore, "users", newUid);
     await setDoc(ref, { ...data, uid: newUid, role: UserRole.FACULTY });
   }
 
   async resetFacultyPassword(uid: string, newPass: string): Promise<void> {
-    // 1. Fetch old profile
     const userRef = doc(firestore, "users", uid);
     const userSnap = await getDoc(userRef);
     if (!userSnap.exists()) throw new Error("User profile not found");
@@ -251,33 +250,25 @@ class FirebaseService implements IDataService {
 
     let newUid: string;
     try {
-      // 2. Try to create new Auth user
       newUid = await this.createAuthUser(userData.email, newPass);
     } catch (e: any) {
-      // If email exists, we can't overwrite it from client.
       if (e.message && e.message.includes("already in use")) {
         throw new Error("ACCOUNT LOCKED: To reset this password, you must FIRST delete this user from the Firebase Console (Authentication Tab) manually. Then try again.");
       }
       throw e;
     }
 
-    // 3. Migrate Data
     const batch = writeBatch(firestore);
-    
-    // A. Create New Profile
     const newProfileRef = doc(firestore, "users", newUid);
     batch.set(newProfileRef, { ...userData, uid: newUid });
 
-    // B. Migrate Assignments to new UID
     const q = query(collection(firestore, "assignments"), where("facultyId", "==", uid));
     const assignments = await getDocs(q);
     assignments.forEach(a => {
         batch.update(a.ref, { facultyId: newUid });
     });
 
-    // C. Delete Old Profile
     batch.delete(userRef);
-
     await batch.commit();
   }
 
@@ -321,16 +312,10 @@ class FirebaseService implements IDataService {
 
   // --- Attendance ---
   async getAttendance(branchId: string, batchId: string, subjectId: string, date?: string): Promise<AttendanceRecord[]> {
-    // Client-side filtering to avoid complex index requirements for the demo
     const q = query(collection(firestore, "attendance"), where("subjectId", "==", subjectId));
     const snap = await getDocs(q);
     let records = snap.docs.map(d => d.data() as AttendanceRecord);
-    
-    return records.filter(r => 
-      r.branchId === branchId && 
-      r.batchId === batchId && 
-      (!date || r.date === date)
-    );
+    return records.filter(r => r.branchId === branchId && r.batchId === batchId && (!date || r.date === date));
   }
 
   async getStudentAttendance(studentId: string): Promise<AttendanceRecord[]> {
@@ -351,34 +336,11 @@ class FirebaseService implements IDataService {
   // --- Setup ---
   async seedDatabase(): Promise<void> {
     const batch = writeBatch(firestore);
-    
-    // Seed Branches
-    SEED_BRANCHES.forEach(b => {
-      batch.set(doc(firestore, "branches", b.id), b);
-    });
-    
-    // Seed Batches
-    SEED_BATCHES.forEach(b => {
-      batch.set(doc(firestore, "batches", b.id), b);
-    });
-    
-    // Seed Subjects
-    SEED_SUBJECTS.forEach(s => {
-      batch.set(doc(firestore, "subjects", s.id), s);
-    });
-    
-    // Seed Users
-    SEED_USERS.forEach(u => {
-      // For seeding, we use the hardcoded UIDs from constants, 
-      // but logic in login() will map real Auth UIDs to these emails.
-      batch.set(doc(firestore, "users", u.uid), u);
-    });
-
-    // Seed Assignments
-    SEED_ASSIGNMENTS.forEach(a => {
-      batch.set(doc(firestore, "assignments", a.id), a);
-    });
-
+    SEED_BRANCHES.forEach(b => batch.set(doc(firestore, "branches", b.id), b));
+    SEED_BATCHES.forEach(b => batch.set(doc(firestore, "batches", b.id), b));
+    SEED_SUBJECTS.forEach(s => batch.set(doc(firestore, "subjects", s.id), s));
+    SEED_USERS.forEach(u => batch.set(doc(firestore, "users", u.uid), u));
+    SEED_ASSIGNMENTS.forEach(a => batch.set(doc(firestore, "assignments", a.id), a));
     await batch.commit();
     alert("Database seeded! You can now create auth users matching these emails.");
   }
@@ -399,14 +361,13 @@ class MockService implements IDataService {
     localStorage.setItem(key, JSON.stringify(data));
   }
   constructor() {
-    this.seedDatabase(); // Auto-seed mock
+    this.seedDatabase(); 
   }
   async login(email: string, pass: string): Promise<User> {
     await this.simulateDelay();
     const users = this.load('ams_users', SEED_USERS) as User[];
     const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
     if (user) {
-      // Check stored password if present, otherwise ignore (assuming seeded or default)
       const storedPass = (user as any).password;
       if (storedPass && storedPass !== pass) {
         throw new Error("Invalid credentials");
@@ -423,6 +384,31 @@ class MockService implements IDataService {
     const data = localStorage.getItem('ams_current_user');
     return data ? JSON.parse(data) : null;
   }
+  async changePassword(currentPass: string, newPass: string): Promise<void> {
+    await this.simulateDelay();
+    const currentUserJson = localStorage.getItem('ams_current_user');
+    if (!currentUserJson) throw new Error("Not logged in");
+    
+    const currentUser = JSON.parse(currentUserJson);
+    const users = this.load('ams_users', SEED_USERS);
+    const userIdx = users.findIndex((u: any) => u.uid === currentUser.uid);
+    
+    if (userIdx === -1) throw new Error("User record not found");
+    
+    const storedUser = users[userIdx];
+    const actualPass = storedUser.password || "password123";
+    if (actualPass !== currentPass) {
+        throw new Error("Current password is incorrect");
+    }
+    
+    storedUser.password = newPass;
+    this.save('ams_users', users);
+    
+    currentUser.password = newPass;
+    localStorage.setItem('ams_current_user', JSON.stringify(currentUser));
+  }
+
+  // ... (Other Mock Methods remain the same)
   async getBranches(): Promise<Branch[]> {
     await this.simulateDelay();
     return this.load('ams_branches', SEED_BRANCHES);
@@ -468,7 +454,6 @@ class MockService implements IDataService {
     this.save('ams_users', users);
   }
   async deleteUser(uid: string): Promise<void> {
-    // Delete user
     const users = this.load('ams_users', SEED_USERS);
     this.save('ams_users', users.filter((u: User) => u.uid !== uid));
   }
@@ -499,7 +484,6 @@ class MockService implements IDataService {
   }
   async createFaculty(data: Partial<User>, password?: string): Promise<void> {
     const users = this.load('ams_users', SEED_USERS);
-    // Store password on the user object for Mock
     users.push({ ...data, uid: `fac_${Date.now()}`, role: UserRole.FACULTY, password: password || "password123" });
     this.save('ams_users', users);
   }
@@ -527,12 +511,7 @@ class MockService implements IDataService {
   }
   async getAttendance(branchId: string, batchId: string, subjectId: string, date?: string): Promise<AttendanceRecord[]> {
     const all = this.load('ams_attendance', []) as AttendanceRecord[];
-    return all.filter(a => 
-      a.branchId === branchId && 
-      a.batchId === batchId && 
-      a.subjectId === subjectId &&
-      (!date || a.date === date)
-    );
+    return all.filter(a => a.branchId === branchId && a.batchId === batchId && a.subjectId === subjectId && (!date || a.date === date));
   }
   async getStudentAttendance(studentId: string): Promise<AttendanceRecord[]> {
     const all = this.load('ams_attendance', []) as AttendanceRecord[];
@@ -542,9 +521,7 @@ class MockService implements IDataService {
     const all = this.load('ams_attendance', []) as AttendanceRecord[];
     if (records.length > 0) {
       const sample = records[0];
-      const filtered = all.filter(a => 
-        !(a.date === sample.date && a.subjectId === sample.subjectId && a.batchId === sample.batchId)
-      );
+      const filtered = all.filter(a => !(a.date === sample.date && a.subjectId === sample.subjectId && a.batchId === sample.batchId));
       const combined = [...filtered, ...records];
       this.save('ams_attendance', combined);
     }

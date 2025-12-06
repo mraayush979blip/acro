@@ -2,11 +2,52 @@ import React, { useEffect, useState } from 'react';
 import { db } from '../services/db';
 import { User, Subject, AttendanceRecord } from '../types';
 import { Card } from '../components/UI';
-import { PieChart, AlertCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle2 } from 'lucide-react';
 
 interface StudentProps {
   user: User;
 }
+
+// Helper: Circular Progress Component
+const CircularProgress: React.FC<{ percentage: number; size?: number; strokeWidth?: number; colorClass?: string }> = 
+  ({ percentage, size = 80, strokeWidth = 8, colorClass = "text-indigo-600" }) => {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (percentage / 100) * circumference;
+
+  return (
+    <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
+      <svg className="transform -rotate-90 w-full h-full">
+        {/* Track */}
+        <circle
+          className="text-slate-100"
+          strokeWidth={strokeWidth}
+          stroke="currentColor"
+          fill="transparent"
+          r={radius}
+          cx={size / 2}
+          cy={size / 2}
+        />
+        {/* Indicator */}
+        <circle
+          className={`transition-all duration-1000 ease-out ${colorClass}`}
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          stroke="currentColor"
+          fill="transparent"
+          r={radius}
+          cx={size / 2}
+          cy={size / 2}
+        />
+      </svg>
+      <span className={`absolute text-lg font-bold ${colorClass}`}>
+        {percentage}%
+      </span>
+    </div>
+  );
+};
 
 export const StudentDashboard: React.FC<StudentProps> = ({ user }) => {
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -15,7 +56,7 @@ export const StudentDashboard: React.FC<StudentProps> = ({ user }) => {
 
   useEffect(() => {
     const loadData = async () => {
-      // 1. Get all subjects (in a real app, filtering by user's branch would happen here)
+      // 1. Get all subjects (in a real app, we filter by branch)
       const allSubs = await db.getSubjects();
       setSubjects(allSubs);
 
@@ -36,65 +77,67 @@ export const StudentDashboard: React.FC<StudentProps> = ({ user }) => {
     return { total, present, percentage };
   };
 
-  if (loading) return <div className="p-8 text-center text-slate-500">Loading your academic records...</div>;
+  if (loading) return <div className="p-12 text-center text-slate-500">Loading records...</div>;
 
   return (
-    <div className="space-y-6">
-      <div className="bg-indigo-900 rounded-lg p-6 text-white shadow-lg">
-        <h2 className="text-2xl font-bold mb-1">Welcome back, {user.displayName.split(' ')[0]}</h2>
-        <p className="text-indigo-200">
-           {user.studentData?.enrollmentId} • {user.studentData?.branchId.replace('b_', '').toUpperCase()}
-        </p>
+    <div className="space-y-8">
+      {/* Header Profile Card */}
+      <div className="bg-gradient-to-r from-indigo-900 to-indigo-800 rounded-xl p-6 text-white shadow-xl flex justify-between items-center relative overflow-hidden">
+        <div className="relative z-10">
+           <h2 className="text-3xl font-bold mb-1">Hello, {user.displayName.split(' ')[0]}</h2>
+           <p className="text-indigo-200 font-mono text-sm opacity-90">
+             Enrollment: {user.studentData?.enrollmentId} | {user.studentData?.branchId?.replace('b_', '').toUpperCase()}
+           </p>
+        </div>
+        {/* Decorative Circle */}
+        <div className="absolute -right-10 -bottom-20 w-64 h-64 bg-white opacity-5 rounded-full pointer-events-none"></div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
         {subjects.map(subject => {
           const { total, present, percentage } = calculateStats(subject.id);
           const isLow = percentage < 75;
-          const statusColor = isLow ? 'text-red-600' : 'text-green-600';
-          const progressColor = isLow ? 'bg-red-500' : 'bg-green-500';
-          const borderColor = isLow ? 'border-red-200' : 'border-slate-200';
-
-          // Simulate data if total is 0 for demo purposes (so the UI looks populated)
-          // In production, remove this OR block
-          const dispTotal = total || 0; 
-          const dispPercent = total === 0 ? 100 : percentage; 
+          const statusColor = isLow ? 'text-red-600' : 'text-emerald-600';
+          
+          // Demo fallback for display (if 0 records, show 100% or 0%)
+          const dispPercent = total === 0 ? 0 : percentage; 
 
           return (
-            <div key={subject.id} className={`bg-white rounded-xl shadow-sm border ${borderColor} p-6 relative overflow-hidden`}>
-              {isLow && total > 0 && (
-                <div className="absolute top-0 right-0 bg-red-100 text-red-700 px-2 py-1 text-xs font-bold rounded-bl-lg flex items-center">
-                  <AlertCircle className="h-3 w-3 mr-1" /> Low Attendance
-                </div>
-              )}
-              
-              <h3 className="font-bold text-slate-900 text-lg mb-1">{subject.name}</h3>
-              <p className="text-slate-500 text-sm mb-4 font-mono">{subject.code}</p>
-
-              <div className="flex items-end justify-between mb-2">
+            <Card key={subject.id} className="relative overflow-hidden transition-shadow hover:shadow-md border border-slate-200">
+              <div className="flex justify-between items-start mb-6">
                 <div>
-                   <span className={`text-4xl font-bold ${total === 0 ? 'text-slate-400' : statusColor}`}>
-                     {dispPercent}%
-                   </span>
+                   <h3 className="font-bold text-slate-900 text-lg leading-tight mb-1">{subject.name}</h3>
+                   <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">{subject.code}</span>
                 </div>
-                <div className="text-right text-sm text-slate-600">
-                  <div className="font-semibold">{present} / {dispTotal}</div>
-                  <div className="text-xs text-slate-400">Classes Attended</div>
-                </div>
+                {/* Circular Chart */}
+                <CircularProgress 
+                  percentage={dispPercent} 
+                  size={60} 
+                  strokeWidth={5} 
+                  colorClass={isLow && total > 0 ? 'text-red-500' : 'text-indigo-600'} 
+                />
               </div>
 
-              {/* Progress Bar */}
-              <div className="w-full bg-slate-100 rounded-full h-3 mb-4 overflow-hidden">
-                <div 
-                  className={`h-3 rounded-full transition-all duration-1000 ${progressColor}`} 
-                  style={{ width: `${dispPercent}%` }}
-                ></div>
+              {/* Stats Grid */}
+              <div className="bg-slate-50 rounded-lg p-3 grid grid-cols-2 gap-4 border border-slate-100">
+                <div>
+                   <p className="text-xs text-slate-500 uppercase font-semibold">Attended</p>
+                   <p className="text-lg font-bold text-slate-800">{present} <span className="text-xs text-slate-400 font-normal">/ {total}</span></p>
+                </div>
+                <div className="text-right">
+                   <p className="text-xs text-slate-500 uppercase font-semibold">Status</p>
+                   <div className={`inline-flex items-center text-sm font-bold ${statusColor}`}>
+                     {total === 0 ? (
+                       <span className="text-slate-400 font-normal italic">No data</span>
+                     ) : isLow ? (
+                       <><AlertCircle className="h-4 w-4 mr-1" /> Low</>
+                     ) : (
+                       <><CheckCircle2 className="h-4 w-4 mr-1" /> On Track</>
+                     )}
+                   </div>
+                </div>
               </div>
-
-              {total === 0 && (
-                <p className="text-xs text-center text-slate-400 italic">No classes conducted yet.</p>
-              )}
-            </div>
+            </Card>
           );
         })}
       </div>
