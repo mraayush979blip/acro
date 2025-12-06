@@ -62,6 +62,30 @@ const App: React.FC = () => {
     }
   };
 
+  const renderPortal = () => {
+    if (!user) return null;
+    switch (user.role) {
+      case UserRole.ADMIN:
+        return <AdminDashboard />;
+      case UserRole.FACULTY:
+        return <FacultyDashboard user={user} />;
+      case UserRole.STUDENT:
+        return <StudentDashboard user={user} />;
+      default:
+        return <div className="p-10 text-center">Access Denied: Unknown Role</div>;
+    }
+  };
+
+  const getPortalTitle = () => {
+    if (!user) return 'Acropolis AMS';
+    switch (user.role) {
+      case UserRole.ADMIN: return 'Administrator Portal';
+      case UserRole.FACULTY: return 'Faculty Dashboard';
+      case UserRole.STUDENT: return 'Student Portal';
+      default: return 'Acropolis AMS';
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-100">
@@ -73,43 +97,6 @@ const App: React.FC = () => {
   if (!user) {
     return <Login onLogin={handleLogin} />;
   }
-
-  // --- Role-Based Navigation Guards ---
-  const renderPortal = () => {
-    switch (user.role) {
-      case UserRole.ADMIN:
-        return <AdminDashboard />;
-      case UserRole.FACULTY:
-        return <FacultyDashboard user={user} />;
-      case UserRole.STUDENT:
-        return <StudentDashboard user={user} />;
-      default:
-        // Guard against invalid roles
-        return (
-          <div className="flex flex-col items-center justify-center h-[60vh] text-center">
-            <div className="bg-red-50 text-red-600 p-6 rounded-lg border border-red-200 max-w-md">
-              <h2 className="text-xl font-bold mb-2">Access Denied</h2>
-              <p className="mb-4">Your account does not have a valid role assigned (Admin, Faculty, or Student). Please contact the administrator.</p>
-              <button 
-                onClick={handleLogout}
-                className="px-4 py-2 bg-white border border-red-300 rounded hover:bg-red-50 text-red-700 font-medium transition-colors"
-              >
-                Sign Out
-              </button>
-            </div>
-          </div>
-        );
-    }
-  };
-
-  const getPortalTitle = () => {
-    switch (user.role) {
-      case UserRole.ADMIN: return 'Administrator Portal';
-      case UserRole.FACULTY: return 'Faculty Dashboard';
-      case UserRole.STUDENT: return 'Student Portal';
-      default: return 'Acropolis AMS';
-    }
-  };
 
   return (
     <>
