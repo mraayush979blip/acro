@@ -8,9 +8,9 @@ export const SEED_BRANCHES: Branch[] = [
 ];
 
 export const SEED_BATCHES: Batch[] = [
-  { id: 'batch_cse_a', name: 'Batch A', branchId: 'b_cse' },
-  { id: 'batch_cse_b', name: 'Batch B', branchId: 'b_cse' },
-  { id: 'batch_aiml_a', name: 'Batch A', branchId: 'b_aiml' }
+  { id: 'batch_cse_2_a', name: 'CSE Year 2 - Batch A', branchId: 'b_cse' },
+  { id: 'batch_cse_2_b', name: 'CSE Year 2 - Batch B', branchId: 'b_cse' },
+  { id: 'batch_aiml_2_a', name: 'AIML Year 2 - Batch A', branchId: 'b_aiml' }
 ];
 
 export const SEED_SUBJECTS: Subject[] = [
@@ -45,7 +45,7 @@ export const SEED_USERS: User[] = [
     role: UserRole.STUDENT,
     studentData: {
       branchId: 'b_cse',
-      batchId: 'batch_cse_a',
+      batchId: 'batch_cse_2_a',
       enrollmentId: '0827CS211001'
     }
   },
@@ -56,7 +56,7 @@ export const SEED_USERS: User[] = [
     role: UserRole.STUDENT,
     studentData: {
       branchId: 'b_cse',
-      batchId: 'batch_cse_a',
+      batchId: 'batch_cse_2_a',
       enrollmentId: '0827CS211002'
     }
   }
@@ -68,14 +68,14 @@ export const SEED_ASSIGNMENTS: FacultyAssignment[] = [
     id: 'assign_1',
     facultyId: 'fac_1',
     branchId: 'b_cse',
-    batchId: 'batch_cse_a',
+    batchId: 'batch_cse_2_a',
     subjectId: 'sub_ds'
   },
   {
     id: 'assign_2',
     facultyId: 'fac_1',
     branchId: 'b_cse',
-    batchId: 'ALL', // Example of ALL batches assignment
+    batchId: 'ALL', 
     subjectId: 'sub_network'
   }
 ];

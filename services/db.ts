@@ -6,9 +6,8 @@ import { User, Branch, Batch, Subject, FacultyAssignment, AttendanceRecord, User
 import { SEED_BRANCHES, SEED_BATCHES, SEED_SUBJECTS, SEED_USERS, SEED_ASSIGNMENTS } from "../constants";
 
 // --- Configuration ---
-// Configured for Project ID: acropolis-7d028
 const firebaseConfig = {
-  apiKey: "AIzaSyCdpI72dXZU9ZgDi9rNMsThEym7EYJfuq4",
+  apiKey:  "AIzaSyCdpI72dXZU9ZgDi9rNMsThEym7EYJfuq4",
   authDomain: "acropolis-7d028.firebaseapp.com",
   projectId: "acropolis-7d028",
   storageBucket: "acropolis-7d028.firebasestorage.app",
@@ -90,18 +89,14 @@ class FirebaseService implements IDataService {
     const uid = cred.user.uid;
     let userDoc = await getDoc(doc(firestore, "users", uid));
     
-    // Logic: If profile is missing (e.g., after DB reset), try to find by email or allow Bootstrap for HOD.
     if (!userDoc.exists()) {
-       // Attempt to recover by email (in case UID changed but email persists in auth)
        const q = query(collection(firestore, "users"), where("email", "==", email));
        const snapshot = await getDocs(q);
        if (!snapshot.empty) {
          const oldData = snapshot.docs[0].data();
-         // Link new UID to old profile
          await setDoc(doc(firestore, "users", uid), { ...oldData, uid });
          userDoc = await getDoc(doc(firestore, "users", uid));
        } else if (email === 'hod@acropolis.in') {
-         // BOOTSTRAP BACKDOOR: Allow HOD to login even if DB is empty so they can Seed it.
          return {
            uid: uid,
            email: email,
@@ -126,7 +121,6 @@ class FirebaseService implements IDataService {
            if (docRef.exists()) {
              resolve(docRef.data() as User);
            } else if (u.email === 'hod@acropolis.in') {
-             // Allow bootstrap session persistence
              resolve({
                 uid: u.uid,
                 email: u.email!,
@@ -181,11 +175,15 @@ class FirebaseService implements IDataService {
     const q = query(collection(firestore, "users"), where("role", "==", UserRole.STUDENT));
     const snap = await getDocs(q);
     const all = snap.docs.map(d => d.data() as User);
+    
+    // Filter by Branch
+    let filtered = all.filter(s => s.studentData?.branchId === branchId);
+
     // If batchId is provided (or not ALL), filter strict. If ALL, filter by branch only.
     if (batchId && batchId !== 'ALL') {
-        return all.filter(s => s.studentData?.branchId === branchId && s.studentData?.batchId === batchId);
+        filtered = filtered.filter(s => s.studentData?.batchId === batchId);
     }
-    return all.filter(s => s.studentData?.branchId === branchId);
+    return filtered;
   }
 
   async createStudent(data: Partial<User>): Promise<void> {
@@ -278,12 +276,16 @@ class FirebaseService implements IDataService {
     const q = query(collection(firestore, "attendance"), where("subjectId", "==", subjectId));
     const snap = await getDocs(q);
     let records = snap.docs.map(d => d.data() as AttendanceRecord);
-    // If batchId is ALL, we want all records for this Branch+Subject
+    
+    // Filter by hierarchy
+    records = records.filter(r => r.branchId === branchId);
+    
     if (batchId === 'ALL') {
-       return records.filter(r => r.branchId === branchId && (!date || r.date === date));
+       return records.filter(r => !date || r.date === date);
     }
-    return records.filter(r => r.branchId === branchId && r.batchId === batchId && (!date || r.date === date));
+    return records.filter(r => r.batchId === batchId && (!date || r.date === date));
   }
+  
   async getStudentAttendance(studentId: string): Promise<AttendanceRecord[]> {
     const q = query(collection(firestore, "attendance"), where("studentId", "==", studentId));
     const snap = await getDocs(q);
@@ -295,7 +297,6 @@ class FirebaseService implements IDataService {
     await batch.commit();
   }
 
-  // --- Setup ---
   async seedDatabase(): Promise<void> {
     const batch = writeBatch(firestore);
     SEED_BRANCHES.forEach(b => batch.set(doc(firestore, "branches", b.id), b));
@@ -317,7 +318,6 @@ class MockService implements IDataService {
   }
   private save(key: string, data: any[]) { localStorage.setItem(key, JSON.stringify(data)); }
   constructor() { 
-      // Auto seed if empty
       if (!localStorage.getItem('ams_branches')) this.seedDatabase(); 
   }
 
@@ -333,7 +333,7 @@ class MockService implements IDataService {
   }
   async logout() { localStorage.removeItem('ams_current_user'); }
   async getCurrentUser() { const d = localStorage.getItem('ams_current_user'); return d ? JSON.parse(d) : null; }
-  async changePassword(c: string, n: string) { /* Same as before */ }
+  async changePassword(c: string, n: string) { /* ... */ }
 
   async getBranches() { return this.load('ams_branches', SEED_BRANCHES); }
   async addBranch(name: string) { 
@@ -363,21 +363,41 @@ class MockService implements IDataService {
 
   async getStudents(branchId: string, batchId?: string) {
     const users = this.load('ams_users', SEED_USERS) as User[];
+    let filtered = users.filter(u => u.role === UserRole.STUDENT && u.studentData?.branchId === branchId);
     if (batchId && batchId !== 'ALL') {
-        return users.filter(u => u.role === UserRole.STUDENT && u.studentData?.branchId === branchId && u.studentData?.batchId === batchId);
+        filtered = filtered.filter(u => u.studentData?.batchId === batchId);
     }
-    return users.filter(u => u.role === UserRole.STUDENT && u.studentData?.branchId === branchId);
+    return filtered;
   }
+
   async createStudent(data: Partial<User>) {
-    const users = this.load('ams_users', SEED_USERS);
-    users.push({...data, uid:`stu_${Date.now()}`, role: UserRole.STUDENT});
+    const users = this.load('ams_users', SEED_USERS) as User[];
+    if (users.some(u => u.email === data.email || (data.studentData?.enrollmentId && u.studentData?.enrollmentId === data.studentData.enrollmentId))) {
+      throw new Error(`Student with this email or Enrollment ID already exists.`);
+    }
+    users.push({...data, uid:`stu_${Date.now()}`, role: UserRole.STUDENT} as User);
     this.save('ams_users', users);
   }
+
   async importStudents(students: Partial<User>[]) {
-    const users = this.load('ams_users', SEED_USERS);
-    students.forEach((s, i) => users.push({...s, uid:`stu_${Date.now()}_${i}`, role: UserRole.STUDENT}));
+    const users = this.load('ams_users', SEED_USERS) as User[];
+    const existingEmails = new Set(users.map(u => u.email.toLowerCase()));
+    const existingEnrollments = new Set(users.map(u => u.studentData?.enrollmentId?.toLowerCase()).filter(Boolean));
+    let addedCount = 0;
+    students.forEach((s, i) => {
+      const email = s.email?.toLowerCase();
+      const enroll = s.studentData?.enrollmentId?.toLowerCase();
+      if (email && !existingEmails.has(email) && (!enroll || !existingEnrollments.has(enroll))) {
+           users.push({...s, uid:`stu_${Date.now()}_${i}`, role: UserRole.STUDENT} as User);
+           existingEmails.add(email);
+           if (enroll) existingEnrollments.add(enroll);
+           addedCount++;
+      }
+    });
     this.save('ams_users', users);
+    if (addedCount === 0 && students.length > 0) throw new Error("All students were duplicates and skipped.");
   }
+
   async deleteUser(uid: string) {
       const u = this.load('ams_users', SEED_USERS);
       this.save('ams_users', u.filter((x:any)=>x.uid!==uid));
@@ -428,10 +448,13 @@ class MockService implements IDataService {
 
   async getAttendance(branchId: string, batchId: string, subjectId: string, date?: string) {
     const all = this.load('ams_attendance', []) as AttendanceRecord[];
+    // Filter by branch and subject
+    let filtered = all.filter(a => a.branchId === branchId && a.subjectId === subjectId);
+    
     if (batchId === 'ALL') {
-        return all.filter(a => a.branchId === branchId && a.subjectId === subjectId && (!date || a.date === date));
+        return filtered.filter(a => !date || a.date === date);
     }
-    return all.filter(a => a.branchId === branchId && a.batchId === batchId && a.subjectId === subjectId && (!date || a.date === date));
+    return filtered.filter(a => a.batchId === batchId && (!date || a.date === date));
   }
   async getStudentAttendance(studentId: string) {
     const all = this.load('ams_attendance', []) as AttendanceRecord[];
@@ -447,7 +470,6 @@ class MockService implements IDataService {
     }
   }
   async seedDatabase() { 
-      // Force reset local storage
       localStorage.setItem('ams_branches', JSON.stringify(SEED_BRANCHES));
       localStorage.setItem('ams_batches', JSON.stringify(SEED_BATCHES));
       localStorage.setItem('ams_subjects', JSON.stringify(SEED_SUBJECTS));

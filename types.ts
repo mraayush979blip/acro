@@ -26,7 +26,7 @@ export interface Branch {
 export interface Batch {
   id: string;
   name: string;
-  branchId: string; // Linked directly to Branch
+  branchId: string;
 }
 
 export interface Subject {
