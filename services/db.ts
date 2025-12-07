@@ -7,7 +7,7 @@ import { SEED_BRANCHES, SEED_BATCHES, SEED_SUBJECTS, SEED_USERS, SEED_ASSIGNMENT
 
 // --- Configuration ---
 const firebaseConfig = {
-  apiKey:  "AIzaSyCdpI72dXZU9ZgDi9rNMsThEym7EYJfuq4",
+  apiKey:  process.env.API_KEY || "AIzaSyCdpI72dXZU9ZgDi9rNMsThEym7EYJfuq4",
   authDomain: "acropolis-7d028.firebaseapp.com",
   projectId: "acropolis-7d028",
   storageBucket: "acropolis-7d028.firebasestorage.app",
