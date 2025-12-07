@@ -20,7 +20,7 @@ export const StudentDashboard: React.FC<StudentProps> = ({ user }) => {
       const allAssignments = await db.getAssignments();
       const myClassAssignments = allAssignments.filter(a => 
         a.branchId === branchId && 
-        a.batchId === batchId
+        (a.batchId === batchId || a.batchId === 'ALL')
       );
       const mySubjectIds = new Set(myClassAssignments.map(a => a.subjectId));
 

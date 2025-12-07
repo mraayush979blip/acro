@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { db } from '../services/db';
 import { Branch, Batch, User, Subject, FacultyAssignment, AttendanceRecord } from '../types';
 import { Card, Button, Input, Select, Modal, FileUploader } from '../components/UI';
-import { Plus, Trash2, ChevronRight, Users, BookOpen, Database, Key, ArrowLeft, CheckCircle2, XCircle, Trash, Eye, Layers } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, Users, BookOpen, Database, Key, ArrowLeft, CheckCircle2, XCircle, Trash, Eye, Layers, Edit2 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'students' | 'faculty'>('students');
@@ -251,7 +251,11 @@ const FacultyManagement: React.FC = () => {
 
   const [newSub, setNewSub] = useState({ name: '', code: '' });
   const [newFac, setNewFac] = useState({ name: '', email: '', password: '' });
+  
+  // Assignment Form State
   const [assignForm, setAssignForm] = useState({ facultyId: '', subjectId: '', branchId: '', batchId: '' });
+  const [isEditingAssignment, setIsEditingAssignment] = useState(false);
+  const [editingAssignmentId, setEditingAssignmentId] = useState<string | null>(null);
 
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [pendingAssignment, setPendingAssignment] = useState<any>(null);
@@ -297,15 +301,50 @@ const FacultyManagement: React.FC = () => {
   
   const handleAssign = (e: React.FormEvent) => {
     e.preventDefault();
-    if(assignForm.facultyId && assignForm.branchId && assignForm.batchId && assignForm.subjectId) {
-      setPendingAssignment(assignForm);
+    if(assignForm.facultyId && assignForm.branchId && assignForm.subjectId) {
+      // Default batchId to 'ALL' if not selected
+      const finalAssign = {
+          ...assignForm,
+          batchId: assignForm.batchId || 'ALL'
+      };
+      setPendingAssignment(finalAssign);
       setConfirmModalOpen(true);
     }
   };
+
   const confirmAssignment = async () => {
-    if(pendingAssignment) { await db.assignFaculty(pendingAssignment); loadData(); setConfirmModalOpen(false); }
+    if(pendingAssignment) { 
+        if (isEditingAssignment && editingAssignmentId) {
+            await db.removeAssignment(editingAssignmentId);
+            await db.assignFaculty(pendingAssignment);
+        } else {
+            await db.assignFaculty(pendingAssignment); 
+        }
+        loadData(); 
+        setConfirmModalOpen(false); 
+        resetAssignForm();
+    }
   };
+
+  const resetAssignForm = () => {
+      setAssignForm({ facultyId: '', subjectId: '', branchId: '', batchId: '' });
+      setIsEditingAssignment(false);
+      setEditingAssignmentId(null);
+  }
+
   const handleDeleteAssignment = async (id: string) => { if(confirm("Remove?")) { await db.removeAssignment(id); loadData(); }};
+
+  const handleEditAssignment = async (assignment: FacultyAssignment) => {
+      setIsEditingAssignment(true);
+      setEditingAssignmentId(assignment.id);
+      await loadBatches(assignment.branchId);
+      setAssignForm({
+          facultyId: assignment.facultyId,
+          branchId: assignment.branchId,
+          batchId: assignment.batchId,
+          subjectId: assignment.subjectId
+      });
+  };
 
   // Helper to format Context display
   const formatContext = (batchId: string) => {
@@ -337,12 +376,16 @@ const FacultyManagement: React.FC = () => {
            {activeSubTab==='allocations' && (
               <Card>
                 <div className="bg-indigo-50 p-4 rounded mb-4">
+                   <div className="flex justify-between items-center mb-2">
+                       <h4 className="font-semibold text-indigo-900">{isEditingAssignment ? 'Edit Assignment' : 'New Assignment'}</h4>
+                       {isEditingAssignment && <button onClick={resetAssignForm} className="text-xs text-red-600 underline">Cancel Edit</button>}
+                   </div>
                    <form onSubmit={handleAssign} className="grid grid-cols-5 gap-2 items-end">
                       <Select label="Faculty" value={assignForm.facultyId} onChange={e=>setAssignForm({...assignForm, facultyId:e.target.value})} className="mb-0 bg-white">{[<option key="def" value="">Select</option>, ...faculty.map(f=><option key={f.uid} value={f.uid}>{f.displayName}</option>)]}</Select>
                       <Select label="Branch" value={assignForm.branchId} onChange={e=>{setAssignForm({...assignForm, branchId:e.target.value, batchId:''}); loadBatches(e.target.value);}} className="mb-0 bg-white">{[<option key="def" value="">Select</option>, ...branches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)]}</Select>
-                      <Select label="Batch" value={assignForm.batchId} onChange={e=>setAssignForm({...assignForm, batchId:e.target.value})} disabled={!assignForm.branchId} className="mb-0 bg-white">{[<option key="def" value="">Select</option>, ...batches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)]}</Select>
+                      <Select label="Batch" value={assignForm.batchId} onChange={e=>setAssignForm({...assignForm, batchId:e.target.value})} disabled={!assignForm.branchId} className="mb-0 bg-white">{[<option key="def" value="">All Batches (Default)</option>, ...batches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)]}</Select>
                       <Select label="Subject" value={assignForm.subjectId} onChange={e=>setAssignForm({...assignForm, subjectId:e.target.value})} className="mb-0 bg-white">{[<option key="def" value="">Select</option>, ...subjects.map(s=><option key={s.id} value={s.id}>{s.name}</option>)]}</Select>
-                      <Button type="submit" className="col-span-5 md:col-span-1">Assign</Button>
+                      <Button type="submit" className="col-span-5 md:col-span-1">{isEditingAssignment ? 'Update' : 'Assign'}</Button>
                    </form>
                 </div>
                 <table className="w-full text-sm text-left"><thead className="bg-slate-50 border-b"><tr><th className="p-2 text-slate-900">Faculty</th><th className="p-2 text-slate-900">Subject</th><th className="p-2 text-slate-900">Context</th><th className="p-2 text-right text-slate-900">Action</th></tr></thead>
@@ -353,13 +396,16 @@ const FacultyManagement: React.FC = () => {
                      return (<tr key={a.id} className="border-b"><td className="p-2 text-slate-900">{fac?.displayName}</td><td className="p-2 text-slate-900">{sub?.name}</td><td className="p-2 text-xs text-slate-600">
                         <div className="font-bold">{br}</div>
                         <div>{formatContext(a.batchId)}</div>
-                     </td><td className="p-2 text-right"><button onClick={()=>handleDeleteAssignment(a.id)}><Trash2 className="h-4 w-4"/></button></td></tr>)
+                     </td><td className="p-2 text-right flex justify-end gap-2">
+                        <button onClick={()=>handleEditAssignment(a)} className="text-blue-500 hover:text-blue-700"><Edit2 className="h-4 w-4"/></button>
+                        <button onClick={()=>handleDeleteAssignment(a.id)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4"/></button>
+                     </td></tr>)
                   })}</tbody></table>
               </Card>
            )}
          </>
        )}
-       <Modal isOpen={confirmModalOpen} onClose={()=>setConfirmModalOpen(false)} title="Confirm"><div className="p-4"><p>Confirm Assignment?</p><div className="flex justify-end gap-2 mt-4"><Button onClick={confirmAssignment}>Yes</Button></div></div></Modal>
+       <Modal isOpen={confirmModalOpen} onClose={()=>setConfirmModalOpen(false)} title="Confirm"><div className="p-4"><p>{isEditingAssignment ? 'Update this assignment?' : 'Confirm Assignment?'}</p><div className="flex justify-end gap-2 mt-4"><Button onClick={confirmAssignment}>Yes</Button></div></div></Modal>
        <Modal isOpen={resetModalOpen} onClose={()=>setResetModalOpen(false)} title="Reset Password"><div className="p-4"><Input label="New Password" value={newPasswordInput} onChange={e=>setNewPasswordInput(e.target.value)} className="text-slate-900 bg-white" /><div className="flex justify-end gap-2 mt-4"><Button onClick={handleResetPassword}>Update</Button></div></div></Modal>
      </div>
   );
