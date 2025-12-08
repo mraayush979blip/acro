@@ -1,5 +1,6 @@
+
 import { initializeApp, deleteApp, FirebaseApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider, User as FirebaseUser, sendPasswordResetEmail, deleteUser } from "firebase/auth";
+import { getAuth, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider, User as FirebaseUser, sendPasswordResetEmail, deleteUser as deleteAuthUser } from "firebase/auth";
 import { getFirestore, collection, getDocs, doc, setDoc, query, where, addDoc, deleteDoc, getDoc, writeBatch, updateDoc } from "firebase/firestore";
 import { User, Branch, Batch, Subject, FacultyAssignment, AttendanceRecord, UserRole } from "../types";
 import { SEED_BRANCHES, SEED_BATCHES, SEED_SUBJECTS, SEED_USERS, SEED_ASSIGNMENTS } from "../constants";
@@ -210,7 +211,41 @@ class FirebaseService implements IDataService {
     }
   }
 
-  async deleteUser(uid: string): Promise<void> { await deleteDoc(doc(firestore, "users", uid)); }
+  async deleteUser(uid: string): Promise<void> { 
+    // Admin Override Deletion Strategy:
+    // 1. Get the stored password from Firestore
+    // 2. Sign in as that user in a secondary app
+    // 3. Delete the auth user
+    // 4. Delete the firestore doc
+    
+    const userRef = doc(firestore, "users", uid);
+    const userSnap = await getDoc(userRef);
+    
+    if (userSnap.exists()) {
+        const userData = userSnap.data() as any;
+        const password = userData.password;
+        const email = userData.email;
+
+        if (password && email) {
+            let tempApp: FirebaseApp | null = null;
+            try {
+                tempApp = initializeApp(firebaseConfig, "TempDeleteApp");
+                const tempAuth = getAuth(tempApp);
+                const cred = await signInWithEmailAndPassword(tempAuth, email, password);
+                await deleteAuthUser(cred.user); // Delete from Authentication
+                await signOut(tempAuth);
+            } catch (e: any) {
+                console.warn("Could not delete Auth user (maybe password changed manually or user missing):", e.message);
+                // We proceed to delete the Firestore doc anyway so the Admin UI updates
+            } finally {
+                if (tempApp) await deleteApp(tempApp);
+            }
+        }
+    }
+
+    // Always delete the Firestore record
+    await deleteDoc(userRef); 
+  }
 
   async getFaculty(): Promise<User[]> {
     const q = query(collection(firestore, "users"), where("role", "==", UserRole.FACULTY));
@@ -244,7 +279,7 @@ class FirebaseService implements IDataService {
             tempApp = initializeApp(firebaseConfig, "TempResetApp");
             const tempAuth = getAuth(tempApp);
             const cred = await signInWithEmailAndPassword(tempAuth, userData.email, oldPass);
-            await deleteUser(cred.user); // Delete Auth User
+            await deleteAuthUser(cred.user); // Delete Auth User
             await signOut(tempAuth);
         } catch (e: any) {
              console.warn("Could not delete old auth user (maybe password changed or user missing):", e.message);
