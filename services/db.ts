@@ -1,6 +1,5 @@
-
 import { initializeApp, deleteApp, FirebaseApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider, User as FirebaseUser } from "firebase/auth";
+import { getAuth, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider, User as FirebaseUser, sendPasswordResetEmail, deleteUser } from "firebase/auth";
 import { getFirestore, collection, getDocs, doc, setDoc, query, where, addDoc, deleteDoc, getDoc, writeBatch, updateDoc } from "firebase/firestore";
 import { User, Branch, Batch, Subject, FacultyAssignment, AttendanceRecord, UserRole } from "../types";
 import { SEED_BRANCHES, SEED_BATCHES, SEED_SUBJECTS, SEED_USERS, SEED_ASSIGNMENTS } from "../constants";
@@ -142,6 +141,9 @@ class FirebaseService implements IDataService {
       const credential = EmailAuthProvider.credential(user.email, currentPass);
       await reauthenticateWithCredential(user, credential);
       await updatePassword(user, newPass);
+      // Also update firestore password for admin overrides
+      const ref = doc(firestore, "users", user.uid);
+      await updateDoc(ref, { password: newPass });
     } catch (e: any) {
       if (e.code === 'auth/wrong-password') throw new Error("Incorrect password.");
       throw e;
@@ -183,7 +185,8 @@ class FirebaseService implements IDataService {
     if (batchId && batchId !== 'ALL') {
         filtered = filtered.filter(s => s.studentData?.batchId === batchId);
     }
-    return filtered;
+    // Sort by Roll No numerically
+    return filtered.sort((a, b) => (a.studentData?.rollNo || '').localeCompare(b.studentData?.rollNo || '', undefined, { numeric: true }));
   }
 
   async createStudent(data: Partial<User>): Promise<void> {
@@ -191,7 +194,7 @@ class FirebaseService implements IDataService {
     const password = data.studentData?.enrollmentId || "password123";
     const newUid = await this.createAuthUser(data.email, password);
     const ref = doc(firestore, "users", newUid);
-    await setDoc(ref, { ...data, uid: newUid, role: UserRole.STUDENT });
+    await setDoc(ref, { ...data, uid: newUid, role: UserRole.STUDENT, password: password });
   }
 
   async importStudents(students: Partial<User>[]): Promise<void> {
@@ -201,7 +204,7 @@ class FirebaseService implements IDataService {
           const password = s.studentData?.enrollmentId || "password123";
           const newUid = await this.createAuthUser(s.email, password);
           const ref = doc(firestore, "users", newUid);
-          await setDoc(ref, { ...s, uid: newUid, role: UserRole.STUDENT });
+          await setDoc(ref, { ...s, uid: newUid, role: UserRole.STUDENT, password: password });
         } catch (e) { console.error(`Import failed for ${s.email}`, e); }
       }
     }
@@ -220,7 +223,7 @@ class FirebaseService implements IDataService {
     const pass = password || "password123";
     const newUid = await this.createAuthUser(data.email, pass);
     const ref = doc(firestore, "users", newUid);
-    await setDoc(ref, { ...data, uid: newUid, role: UserRole.FACULTY });
+    await setDoc(ref, { ...data, uid: newUid, role: UserRole.FACULTY, password: pass });
   }
 
   async resetFacultyPassword(uid: string, newPass: string): Promise<void> {
@@ -228,19 +231,54 @@ class FirebaseService implements IDataService {
     const userSnap = await getDoc(userRef);
     if (!userSnap.exists()) throw new Error("User not found");
     const userData = userSnap.data() as User;
+    
+    // Admin Override Strategy:
+    // 1. If we have the old password stored, sign in as them, delete them, and recreate.
+    // 2. If not, try to create (in case they don't exist in Auth).
+    
+    const oldPass = (userData as any).password;
+    
+    if (oldPass) {
+        let tempApp: FirebaseApp | null = null;
+        try {
+            tempApp = initializeApp(firebaseConfig, "TempResetApp");
+            const tempAuth = getAuth(tempApp);
+            const cred = await signInWithEmailAndPassword(tempAuth, userData.email, oldPass);
+            await deleteUser(cred.user); // Delete Auth User
+            await signOut(tempAuth);
+        } catch (e: any) {
+             console.warn("Could not delete old auth user (maybe password changed or user missing):", e.message);
+             // Proceed anyway to try and create/overwrite
+        } finally {
+            if (tempApp) await deleteApp(tempApp);
+        }
+    }
+
     let newUid;
     try {
       newUid = await this.createAuthUser(userData.email, newPass);
     } catch (e: any) {
-      if (e.message && e.message.includes("already in use")) throw new Error("Please delete user from Firebase Console first.");
+      if (e.code === 'auth/email-already-in-use') {
+         // Fallback if we couldn't delete them earlier
+         await sendPasswordResetEmail(auth, userData.email);
+         throw new Error(`User exists and could not be force-reset. A Password Reset email has been sent to ${userData.email}.`);
+      }
       throw e;
     }
+    
     const batch = writeBatch(firestore);
-    batch.set(doc(firestore, "users", newUid), { ...userData, uid: newUid });
+    // Update profile with new UID and new Password
+    batch.set(doc(firestore, "users", newUid), { ...userData, uid: newUid, password: newPass });
+    
+    // Migrate assignments
     const q = query(collection(firestore, "assignments"), where("facultyId", "==", uid));
     const assigns = await getDocs(q);
     assigns.forEach(a => batch.update(a.ref, { facultyId: newUid }));
-    batch.delete(userRef);
+    
+    // Delete old profile if UID changed
+    if (newUid !== uid) {
+        batch.delete(userRef);
+    }
     await batch.commit();
   }
 
@@ -265,9 +303,15 @@ class FirebaseService implements IDataService {
     const snap = await getDocs(q);
     return snap.docs.map(d => d.data() as FacultyAssignment);
   }
-  async assignFaculty(data: Omit<FacultyAssignment, 'id'>): Promise<void> {
-    const ref = doc(collection(firestore, "assignments"));
-    await setDoc(ref, { ...data, id: ref.id });
+  async assignFaculty(data: Omit<FacultyAssignment, 'id'> | FacultyAssignment): Promise<void> {
+    let ref;
+    if ('id' in data && data.id) {
+        ref = doc(firestore, "assignments", data.id);
+        await setDoc(ref, data);
+    } else {
+        ref = doc(collection(firestore, "assignments"));
+        await setDoc(ref, { ...data, id: ref.id });
+    }
   }
   async removeAssignment(id: string): Promise<void> { await deleteDoc(doc(firestore, "assignments", id)); }
 
@@ -333,7 +377,17 @@ class MockService implements IDataService {
   }
   async logout() { localStorage.removeItem('ams_current_user'); }
   async getCurrentUser() { const d = localStorage.getItem('ams_current_user'); return d ? JSON.parse(d) : null; }
-  async changePassword(c: string, n: string) { /* ... */ }
+  async changePassword(c: string, n: string) { 
+      const u = await this.getCurrentUser();
+      if (!u) throw new Error("Not logged in");
+      const users = this.load('ams_users', SEED_USERS);
+      const idx = users.findIndex((x:any) => x.uid === u.uid);
+      if (idx >= 0) {
+          if (users[idx].password && users[idx].password !== c) throw new Error("Incorrect Password");
+          users[idx].password = n;
+          this.save('ams_users', users);
+      }
+  }
 
   async getBranches() { return this.load('ams_branches', SEED_BRANCHES); }
   async addBranch(name: string) { 
@@ -367,7 +421,8 @@ class MockService implements IDataService {
     if (batchId && batchId !== 'ALL') {
         filtered = filtered.filter(u => u.studentData?.batchId === batchId);
     }
-    return filtered;
+    // Sort by Roll No numerically
+    return filtered.sort((a, b) => (a.studentData?.rollNo || '').localeCompare(b.studentData?.rollNo || '', undefined, { numeric: true }));
   }
 
   async createStudent(data: Partial<User>) {
@@ -375,7 +430,7 @@ class MockService implements IDataService {
     if (users.some(u => u.email === data.email || (data.studentData?.enrollmentId && u.studentData?.enrollmentId === data.studentData.enrollmentId))) {
       throw new Error(`Student with this email or Enrollment ID already exists.`);
     }
-    users.push({...data, uid:`stu_${Date.now()}`, role: UserRole.STUDENT} as User);
+    users.push({...data, uid:`stu_${Date.now()}`, role: UserRole.STUDENT, password: data.studentData?.enrollmentId || 'password123'} as User);
     this.save('ams_users', users);
   }
 
@@ -388,7 +443,7 @@ class MockService implements IDataService {
       const email = s.email?.toLowerCase();
       const enroll = s.studentData?.enrollmentId?.toLowerCase();
       if (email && !existingEmails.has(email) && (!enroll || !existingEnrollments.has(enroll))) {
-           users.push({...s, uid:`stu_${Date.now()}_${i}`, role: UserRole.STUDENT} as User);
+           users.push({...s, uid:`stu_${Date.now()}_${i}`, role: UserRole.STUDENT, password: enroll || 'password123'} as User);
            existingEmails.add(email);
            if (enroll) existingEnrollments.add(enroll);
            addedCount++;
@@ -438,7 +493,15 @@ class MockService implements IDataService {
   }
   async assignFaculty(data: any) {
     const all = this.load('ams_assignments', SEED_ASSIGNMENTS);
-    all.push({...data, id:`assign_${Date.now()}`});
+    if (data.id) {
+        // Edit mode
+        const idx = all.findIndex((x:any) => x.id === data.id);
+        if (idx >= 0) all[idx] = data;
+        else all.push(data);
+    } else {
+        // New
+        all.push({...data, id:`assign_${Date.now()}`});
+    }
     this.save('ams_assignments', all);
   }
   async removeAssignment(id: string) { 

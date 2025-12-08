@@ -96,7 +96,8 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
         
         // Deduplicate
         const unique = Array.from(new Map(data.map(s => [s.uid, s])).values());
-        setAllBranchStudents(unique.sort((a,b) => (a.studentData?.rollNo || '').localeCompare(b.studentData?.rollNo || '')));
+        // Sort numerically by Roll No
+        setAllBranchStudents(unique.sort((a,b) => (a.studentData?.rollNo || '').localeCompare(b.studentData?.rollNo || '', undefined, { numeric: true })));
         
         // Load Attendance
         // For 'ALL' batches context, we fetch everything for this subject/branch
@@ -505,7 +506,7 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user }) => {
                   </div>
                   
                   <div className="overflow-x-auto">
-                     <table className="w-full text-sm text-left">
+                     <table className="w-full text-sm text-left text-slate-900">
                         <thead className="bg-slate-50 border-b">
                            <tr>
                               <th className="p-3 text-slate-900 font-bold">Roll</th>
