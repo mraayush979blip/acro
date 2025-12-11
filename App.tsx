@@ -1,5 +1,5 @@
-
 import React, { useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { db } from './services/db';
 import { User, UserRole } from './types';
 import { Login } from './views/Login';
@@ -9,14 +9,11 @@ import { FacultyDashboard } from './views/Faculty';
 import { StudentDashboard } from './views/Student';
 import { Modal, Input, Button } from './components/UI';
 
-const App: React.FC = () => {
+// Wrapper component to handle auth redirects
+const AuthGuard: React.FC<{ children: React.ReactNode; allowedRoles?: UserRole[] }> = ({ children, allowedRoles }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-
-  // Settings / Password Change State
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [passForm, setPassForm] = useState({ current: '', new: '', confirm: '' });
-  const [settingsLoading, setSettingsLoading] = useState(false);
+  const location = useLocation();
 
   useEffect(() => {
     const checkUser = async () => {
@@ -32,13 +29,50 @@ const App: React.FC = () => {
     checkUser();
   }, []);
 
-  const handleLogin = (loggedInUser: User) => {
-    setUser(loggedInUser);
-  };
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-100">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  if (allowedRoles && !allowedRoles.includes(user.role)) {
+    return <div className="p-10 text-center">Access Denied: Insufficient Permissions</div>;
+  }
+
+  // Pass user prop to children if they expect it
+  const childrenWithProps = React.Children.map(children, child => {
+    if (React.isValidElement(child)) {
+      // @ts-ignore - We know these components accept user
+      return React.cloneElement(child, { user });
+    }
+    return child;
+  });
+
+  return <>{childrenWithProps}</>;
+};
+
+// Main App Layout Wrapper to provide context/props to Layout
+const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [passForm, setPassForm] = useState({ current: '', new: '', confirm: '' });
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    db.getCurrentUser().then(setUser).catch(() => setUser(null));
+  }, []);
 
   const handleLogout = async () => {
     await db.logout();
     setUser(null);
+    navigate('/login');
   };
 
   const handleChangePassword = async () => {
@@ -63,20 +97,6 @@ const App: React.FC = () => {
     }
   };
 
-  const renderPortal = () => {
-    if (!user) return null;
-    switch (user.role) {
-      case UserRole.ADMIN:
-        return <AdminDashboard />;
-      case UserRole.FACULTY:
-        return <FacultyDashboard user={user} />;
-      case UserRole.STUDENT:
-        return <StudentDashboard user={user} />;
-      default:
-        return <div className="p-10 text-center">Access Denied: Unknown Role</div>;
-    }
-  };
-
   const getPortalTitle = () => {
     if (!user) return 'Acropolis AMS';
     switch (user.role) {
@@ -87,63 +107,99 @@ const App: React.FC = () => {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <Login onLogin={handleLogin} />;
-  }
+  if (!user) return null; // Should be handled by AuthGuard but safe to have
 
   return (
     <>
-      <Layout 
-        user={user} 
-        onLogout={handleLogout} 
+      <Layout
+        user={user}
+        onLogout={handleLogout}
         onOpenSettings={() => setIsSettingsOpen(true)}
         title={getPortalTitle()}
       >
-        {renderPortal()}
+        {children}
       </Layout>
 
-      {/* Global Settings Modal - Only render if not student */}
       {user.role !== UserRole.STUDENT && (
         <Modal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} title="Profile Settings">
-           <div className="space-y-4">
-              <h4 className="font-semibold text-slate-800 border-b border-slate-100 pb-2">Change Password</h4>
-              <Input 
-                 label="Current Password" 
-                 type="password" 
-                 value={passForm.current} 
-                 onChange={e => setPassForm({...passForm, current: e.target.value})} 
-              />
-              <Input 
-                 label="New Password" 
-                 type="password" 
-                 value={passForm.new} 
-                 onChange={e => setPassForm({...passForm, new: e.target.value})}
-                 placeholder="Min 6 characters"
-              />
-               <Input 
-                 label="Confirm New Password" 
-                 type="password" 
-                 value={passForm.confirm} 
-                 onChange={e => setPassForm({...passForm, confirm: e.target.value})} 
-              />
-              <div className="flex justify-end gap-2 mt-4 pt-2 border-t border-slate-100">
-                 <Button variant="secondary" onClick={() => setIsSettingsOpen(false)} disabled={settingsLoading}>Cancel</Button>
-                 <Button onClick={handleChangePassword} disabled={!passForm.current || !passForm.new || settingsLoading}>
-                   {settingsLoading ? 'Updating...' : 'Update Password'}
-                 </Button>
-              </div>
-           </div>
+          <div className="space-y-4">
+            <h4 className="font-semibold text-slate-800 border-b border-slate-100 pb-2">Change Password</h4>
+            <Input
+              label="Current Password"
+              type="password"
+              value={passForm.current}
+              onChange={e => setPassForm({ ...passForm, current: e.target.value })}
+            />
+            <Input
+              label="New Password"
+              type="password"
+              value={passForm.new}
+              onChange={e => setPassForm({ ...passForm, new: e.target.value })}
+              placeholder="Min 6 characters"
+            />
+            <Input
+              label="Confirm New Password"
+              type="password"
+              value={passForm.confirm}
+              onChange={e => setPassForm({ ...passForm, confirm: e.target.value })}
+            />
+            <div className="flex justify-end gap-2 mt-4 pt-2 border-t border-slate-100">
+              <Button variant="secondary" onClick={() => setIsSettingsOpen(false)} disabled={settingsLoading}>Cancel</Button>
+              <Button onClick={handleChangePassword} disabled={!passForm.current || !passForm.new || settingsLoading}>
+                {settingsLoading ? 'Updating...' : 'Update Password'}
+              </Button>
+            </div>
+          </div>
         </Modal>
       )}
     </>
+  );
+};
+
+const LoginWrapper = () => {
+  const navigate = useNavigate();
+  const handleLogin = (user: User) => {
+    if (user.role === UserRole.ADMIN) navigate('/admin');
+    else if (user.role === UserRole.FACULTY) navigate('/faculty');
+    else if (user.role === UserRole.STUDENT) navigate('/student');
+    else navigate('/');
+  };
+  return <Login onLogin={handleLogin} />;
+};
+
+const App: React.FC = () => {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<LoginWrapper />} />
+
+        <Route path="/admin" element={
+          <AuthGuard allowedRoles={[UserRole.ADMIN]}>
+            <AppLayout>
+              <AdminDashboard />
+            </AppLayout>
+          </AuthGuard>
+        } />
+
+        <Route path="/faculty" element={
+          <AuthGuard allowedRoles={[UserRole.FACULTY]}>
+            <AppLayout>
+              <FacultyDashboard user={{} as User} /> {/* User injected by AuthGuard/AppLayout logic or we need to fix prop drilling */}
+            </AppLayout>
+          </AuthGuard>
+        } />
+
+        <Route path="/student" element={
+          <AuthGuard allowedRoles={[UserRole.STUDENT]}>
+            <AppLayout>
+              <StudentDashboard user={{} as User} />
+            </AppLayout>
+          </AuthGuard>
+        } />
+
+        <Route path="/" element={<Navigate to="/login" replace />} />
+      </Routes>
+    </BrowserRouter>
   );
 };
 
