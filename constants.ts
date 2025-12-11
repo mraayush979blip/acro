@@ -33,12 +33,6 @@ export const SEED_USERS: User[] = [
     role: UserRole.FACULTY
   },
   {
-    uid: 'fac_2',
-    email: 'verma@acropolis.in',
-    displayName: 'Prof. Verma',
-    role: UserRole.FACULTY
-  },
-  {
     uid: 'stu_1',
     email: 'student@acropolis.in',
     displayName: 'Rahul Singh',
