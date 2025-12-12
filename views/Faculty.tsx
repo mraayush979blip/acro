@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { db } from '../services/db';
 import { User, FacultyAssignment, AttendanceRecord, Batch } from '../types';
-import { Button, Card } from '../components/UI';
-import { Save, History, FileDown, Filter, ArrowLeft, CheckCircle2, ChevronDown, Check, X, CheckSquare, Square, XCircle } from 'lucide-react';
+import { Button, Card, Modal } from '../components/UI';
+import { Save, History, FileDown, Filter, ArrowLeft, CheckCircle2, ChevronDown, Check, X, CheckSquare, Square, XCircle, AlertCircle } from 'lucide-react';
 
 interface FacultyProps { user: User; }
 
@@ -67,6 +67,18 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user: propUser }) => 
    // History State
    const [viewHistoryStudent, setViewHistoryStudent] = useState<User | null>(null);
    const [historyFilterDate, setHistoryFilterDate] = useState('');
+
+   // Confirmation Modal State
+   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+   const [saveSummary, setSaveSummary] = useState<{
+      subjectName: string;
+      date: string;
+      slots: string;
+      batchNames: string;
+      totalPresent: number;
+      totalAbsent: number;
+      totalStudents: number;
+   } | null>(null);
 
    // 1. Initialize Data
    useEffect(() => {
@@ -200,16 +212,28 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user: propUser }) => 
       });
    };
 
-   const handleSave = async () => {
+   const handleSave = () => {
       if (selectedSlots.length === 0) { alert("Please select at least one lecture slot."); return; }
       if (visibleStudents.length === 0) { alert("No students selected."); return; }
+      if (!user || !user.displayName) { alert("Error: User profile not loaded. Please refresh the page."); return; }
 
-      // Safety check for user
-      if (!user || !user.displayName) {
-         alert("Error: User profile not loaded. Please refresh the page.");
-         return;
-      }
+      const presentCount = visibleStudents.filter(s => attendanceStatus[s.uid]).length;
+      const absentCount = visibleStudents.length - presentCount;
+      const totalRecords = visibleStudents.length * selectedSlots.length;
 
+      setSaveSummary({
+         subjectName: metaData.subjects[selSubjectId]?.name || 'Unknown Subject',
+         date: attendanceDate,
+         slots: selectedSlots.join(', '),
+         batchNames: selectedMarkingBatches.map(bid => metaData.batches[bid] || bid).join(', '),
+         totalPresent: presentCount * selectedSlots.length,
+         totalAbsent: absentCount * selectedSlots.length,
+         totalStudents: totalRecords
+      });
+      setConfirmModalOpen(true);
+   };
+
+   const executeSave = async () => {
       setIsSaving(true);
       setSaveMessage('');
 
@@ -219,13 +243,12 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user: propUser }) => 
       selectedSlots.forEach(slot => {
          visibleStudents.forEach(s => {
             records.push({
-               // ID construction ensures overwrite for same date/student/subject/slot
                id: `${attendanceDate}_${s.uid}_${selSubjectId}_L${slot}`,
                date: attendanceDate,
                studentId: s.uid,
                subjectId: selSubjectId,
                branchId: selBranchId,
-               batchId: s.studentData!.batchId!, // Use student's actual batch
+               batchId: s.studentData!.batchId!,
                isPresent: attendanceStatus[s.uid] ?? true,
                markedBy: user.displayName,
                timestamp: timestamp,
@@ -237,8 +260,8 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user: propUser }) => 
       try {
          await db.saveAttendance(records);
          setSaveMessage('Attendance Saved Successfully!');
-         // Refresh History
          setAllClassRecords(await db.getAttendance(selBranchId, 'ALL', selSubjectId));
+         setConfirmModalOpen(false);
          setTimeout(() => setSaveMessage(''), 3000);
       } catch (e: any) {
          alert("Error saving: " + e.message);
@@ -498,6 +521,60 @@ export const FacultyDashboard: React.FC<FacultyProps> = ({ user: propUser }) => 
                            </Button>
                         </div>
                      </div>
+
+                     {/* Confirmation Modal */}
+                     <Modal
+                        isOpen={confirmModalOpen}
+                        onClose={() => setConfirmModalOpen(false)}
+                        title="Confirm Attendance Submission"
+                     >
+                        <div className="space-y-4">
+                           <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 text-sm space-y-2">
+                              <div className="flex justify-between">
+                                 <span className="text-slate-500">Subject:</span>
+                                 <span className="font-medium text-slate-900">{saveSummary?.subjectName}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                 <span className="text-slate-500">Date:</span>
+                                 <span className="font-medium text-slate-900">{saveSummary?.date}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                 <span className="text-slate-500">Lecture Slots:</span>
+                                 <span className="font-medium text-slate-900">{saveSummary?.slots}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                 <span className="text-slate-500">Batches:</span>
+                                 <span className="font-medium text-slate-900">{saveSummary?.batchNames}</span>
+                              </div>
+                              <div className="border-t border-slate-200 pt-2 mt-2">
+                                 <div className="flex justify-between text-green-700">
+                                    <span>Total Present:</span>
+                                    <span className="font-bold">{saveSummary?.totalPresent}</span>
+                                 </div>
+                                 <div className="flex justify-between text-red-700">
+                                    <span>Total Absent:</span>
+                                    <span className="font-bold">{saveSummary?.totalAbsent}</span>
+                                 </div>
+                                 <div className="flex justify-between font-bold text-slate-900 pt-1">
+                                    <span>Total Records:</span>
+                                    <span>{saveSummary?.totalStudents}</span>
+                                 </div>
+                              </div>
+                           </div>
+
+                           <div className="text-xs text-slate-500 bg-yellow-50 p-3 rounded border border-yellow-100 flex gap-2">
+                              <AlertCircle className="h-4 w-4 text-yellow-600 flex-shrink-0" />
+                              <p>Please verify the details above. Once saved, this action will update the attendance records for all selected students.</p>
+                           </div>
+
+                           <div className="flex justify-end gap-3 pt-2">
+                              <Button variant="secondary" onClick={() => setConfirmModalOpen(false)}>Cancel</Button>
+                              <Button onClick={executeSave} disabled={isSaving}>
+                                 {isSaving ? 'Saving...' : 'Confirm & Save'}
+                              </Button>
+                           </div>
+                        </div>
+                     </Modal>
                   </div>
                )}
 
