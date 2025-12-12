@@ -58,20 +58,16 @@ const AuthGuard: React.FC<{ children: React.ReactNode; allowedRoles?: UserRole[]
 };
 
 // Main App Layout Wrapper to provide context/props to Layout
-const AppLayout: React.FC<{ children: React.ReactNode; user?: User }> = ({ children, user: propUser }) => {
-  const [user, setUser] = useState<User | null>(propUser || null);
+const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [passForm, setPassForm] = useState({ current: '', new: '', confirm: '' });
   const [settingsLoading, setSettingsLoading] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (propUser) {
-      setUser(propUser);
-    } else {
-      db.getCurrentUser().then(setUser).catch(() => setUser(null));
-    }
-  }, [propUser]);
+    db.getCurrentUser().then(setUser).catch(() => setUser(null));
+  }, []);
 
   const handleLogout = async () => {
     await db.logout();
@@ -113,14 +109,6 @@ const AppLayout: React.FC<{ children: React.ReactNode; user?: User }> = ({ child
 
   if (!user) return null; // Should be handled by AuthGuard but safe to have
 
-  const childrenWithProps = React.Children.map(children, child => {
-    if (React.isValidElement(child)) {
-      // @ts-ignore
-      return React.cloneElement(child, { user });
-    }
-    return child;
-  });
-
   return (
     <>
       <Layout
@@ -129,7 +117,7 @@ const AppLayout: React.FC<{ children: React.ReactNode; user?: User }> = ({ child
         onOpenSettings={() => setIsSettingsOpen(true)}
         title={getPortalTitle()}
       >
-        {childrenWithProps}
+        {children}
       </Layout>
 
       {user.role !== UserRole.STUDENT && (
