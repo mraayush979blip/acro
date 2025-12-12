@@ -14,22 +14,13 @@ export const StudentDashboard: React.FC<StudentProps> = ({ user }) => {
    useEffect(() => {
       const loadData = async () => {
          const { branchId, batchId } = user.studentData || {};
-         console.log('Student Debug:', { user, branchId, batchId });
-
-         if (!branchId || !batchId) {
-            console.log('Missing branchId or batchId');
-            setLoading(false); return;
-         }
+         if (!branchId || !batchId) { setLoading(false); return; }
 
          const allAssignments = await db.getAssignments();
-         console.log('All Assignments:', allAssignments);
-
          const myClassAssignments = allAssignments.filter(a =>
             a.branchId === branchId &&
             (a.batchId === batchId || a.batchId === 'ALL')
          );
-         console.log('Filtered Assignments:', myClassAssignments);
-
          const mySubjectIds = new Set(myClassAssignments.map(a => a.subjectId));
 
          const allSubs = await db.getSubjects();
@@ -96,16 +87,6 @@ export const StudentDashboard: React.FC<StudentProps> = ({ user }) => {
                   </Card>
                )
             }) : <div className="col-span-3 text-center p-10 text-slate-500 border border-dashed rounded">No subjects assigned.</div>}
-         </div>
-
-         {/* Debug Info - Remove in production */}
-         <div className="mt-8 p-4 bg-gray-100 rounded text-xs font-mono text-gray-600">
-            <p><strong>Debug Info:</strong></p>
-            <p>User ID: {user.uid}</p>
-            <p>Branch ID: {user.studentData?.branchId || 'N/A'}</p>
-            <p>Batch ID: {user.studentData?.batchId || 'N/A'}</p>
-            <p>Enrollment: {user.studentData?.enrollmentId || 'N/A'}</p>
-            <p>Subjects Found: {subjects.length}</p>
          </div>
       </div>
    );
